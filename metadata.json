@@ -1,0 +1,6 @@
+{
+  "name": "GestãoCorretor",
+  "description": "Sistema intuitivo e moderno de gestão (CRM) para corretores de seguros automotivos: controle de apólices, comissões, renovações, anexos e aniversariantes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
