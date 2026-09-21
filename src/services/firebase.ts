@@ -446,53 +446,69 @@ export async function firebaseSignOut(): Promise<void> {
   }
 }
 
-export async function firebaseUpdateUserProfile(updated: Partial<User>): Promise<void> {
+export async function firebaseUpdateUserProfile(updated: Partial<User>): Promise<User> {
+  const startTime = performance.now();
   const auth = getFirebaseAuth();
   const currentUser = auth?.currentUser;
   const userId = updated.id || currentUser?.uid;
 
+  if (!userId) {
+    throw new Error('Nenhum ID de usuário fornecido para atualização do perfil.');
+  }
+
   const fullName = updated.name?.trim() || [updated.firstName, updated.lastName].filter(Boolean).join(' ');
+  const currentLocal = loadUserProfile(userId);
 
-  // 1. Update Firebase Auth (displayName, email)
+  const completeUser: User = {
+    id: userId,
+    name: fullName || currentLocal?.name || currentUser?.displayName || 'Corretor',
+    firstName: updated.firstName !== undefined ? updated.firstName : (currentLocal?.firstName || (fullName ? fullName.split(/\s+/)[0] : 'Corretor')),
+    lastName: updated.lastName !== undefined ? updated.lastName : (currentLocal?.lastName || (fullName ? fullName.split(/\s+/).slice(1).join(' ') : '')),
+    email: updated.email || currentLocal?.email || currentUser?.email || '',
+    brokerageName: updated.brokerageName !== undefined ? updated.brokerageName : (currentLocal?.brokerageName || 'Corretora de Seguros'),
+    susep: updated.susep !== undefined ? updated.susep : (currentLocal?.susep || ''),
+    isAdmin: updated.isAdmin !== undefined ? updated.isAdmin : currentLocal?.isAdmin
+  };
+
+  // 1. Immediate Local Storage Persistence
+  saveUserProfile(completeUser);
+
+  // 2. Prepare parallel remote tasks (Firebase Auth + Firestore)
+  const remoteTasks: Promise<unknown>[] = [];
+
   if (currentUser) {
+    // Update Auth displayName if changed
     if (fullName && fullName !== currentUser.displayName) {
-      try {
-        await updateProfile(currentUser, { displayName: fullName });
-      } catch (err) {
-        console.warn('Firebase updateProfile displayName warning:', err);
-      }
+      remoteTasks.push(
+        updateProfile(currentUser, { displayName: fullName }).catch((err) => {
+          console.warn('Firebase updateProfile displayName warning:', err);
+        })
+      );
     }
 
+    // Update Auth email if changed
     if (updated.email && updated.email.trim() && updated.email.trim() !== currentUser.email) {
-      try {
-        await updateEmail(currentUser, updated.email.trim());
-      } catch (err: unknown) {
-        console.warn('Firebase updateEmail warning (may require recent-login):', err);
-        throw err;
-      }
+      remoteTasks.push(
+        updateEmail(currentUser, updated.email.trim()).catch((err: unknown) => {
+          console.warn('Firebase updateEmail warning (may require recent-login):', err);
+          throw err;
+        })
+      );
     }
   }
 
-  // 2. Persist to Firestore & Local Storage
-  if (userId) {
-    const currentLocal = loadUserProfile(userId);
-    const completeUser: User = {
-      id: userId,
-      name: fullName || currentLocal?.name || currentUser?.displayName || 'Corretor',
-      firstName: updated.firstName !== undefined ? updated.firstName : (currentLocal?.firstName || (fullName ? fullName.split(/\s+/)[0] : 'Corretor')),
-      lastName: updated.lastName !== undefined ? updated.lastName : (currentLocal?.lastName || (fullName ? fullName.split(/\s+/).slice(1).join(' ') : '')),
-      email: updated.email || currentLocal?.email || currentUser?.email || '',
-      brokerageName: updated.brokerageName !== undefined ? updated.brokerageName : (currentLocal?.brokerageName || 'Corretora de Seguros'),
-      susep: updated.susep !== undefined ? updated.susep : (currentLocal?.susep || ''),
-      isAdmin: updated.isAdmin !== undefined ? updated.isAdmin : currentLocal?.isAdmin
-    };
+  // Save to Firestore in parallel
+  remoteTasks.push(saveUserProfileToFirestore(userId, completeUser));
 
-    // Save locally
-    saveUserProfile(completeUser);
-
-    // Save to Firestore
-    await saveUserProfileToFirestore(userId, completeUser);
+  // Execute all remote tasks concurrently
+  if (remoteTasks.length > 0) {
+    await Promise.all(remoteTasks);
   }
+
+  const duration = Math.round(performance.now() - startTime);
+  console.info(`[Profile Performance] Perfil do corretor salvo e sincronizado em ${duration}ms`);
+
+  return completeUser;
 }
 
 export async function firebaseUpdateUserPassword(newPassword: string): Promise<void> {

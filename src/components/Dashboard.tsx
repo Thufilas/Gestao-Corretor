@@ -112,19 +112,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const allAlerts = getExpiryAlerts(clients);
   const upcomingBirthdays = getUpcomingBirthdays(clients);
 
+  const redAlertsCount = allAlerts.filter(a => a.daysRemaining <= 3).length;
+  const orangeAlertsCount = allAlerts.filter(a => a.daysRemaining >= 4 && a.daysRemaining <= 15).length;
+  const yellowAlertsCount = allAlerts.filter(a => a.daysRemaining > 15).length;
+
   // Filter alerts according to selection
   const filteredAlerts = allAlerts.filter(item => {
     if (alertFilter === 'all') return true;
-    if (alertFilter === 'red') return item.alertLevel === 'red' || item.alertLevel === 'expired';
-    if (alertFilter === 'orange') return item.alertLevel === 'orange';
-    if (alertFilter === 'yellow') return item.alertLevel === 'yellow';
+    if (alertFilter === 'red') return item.daysRemaining <= 3;
+    if (alertFilter === 'orange') return item.daysRemaining >= 4 && item.daysRemaining <= 15;
+    if (alertFilter === 'yellow') return item.daysRemaining > 15;
     return true;
   });
 
   // Calculate statistics
   const totalActiveClients = clients.length;
   
-  // Commission expected for current month (based on end date or created date in this month)
+  // Commission expected for current month
   const currentMonth = new Date().getMonth();
   const currentYear = new Date().getFullYear();
 
@@ -134,7 +138,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
     if (y === currentYear && m === currentMonth + 1) {
       return acc + (c.commissionAmount || 0);
     }
-    // Also include upcoming alerts if month matches
     return acc;
   }, 0);
 
@@ -144,10 +147,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const totalPremiums = clients.reduce((acc, c) => acc + (c.totalInsuredValue || 0), 0);
   const totalCommissionsEarned = clients.reduce((acc, c) => acc + (c.commissionAmount || 0), 0);
-
-  const redAlertsCount = allAlerts.filter(a => a.alertLevel === 'red' || a.alertLevel === 'expired').length;
-  const orangeAlertsCount = allAlerts.filter(a => a.alertLevel === 'orange').length;
-  const yellowAlertsCount = allAlerts.filter(a => a.alertLevel === 'yellow').length;
 
   const renewalClientsCount = clients.filter(c => c.clientType === 'Renovação').length;
   const newClientsCount = clients.filter(c => c.clientType === 'Novo').length;
@@ -199,17 +198,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white">
                 Olá, {getUserFirstName(currentUser)}!
               </h1>
-              {onOpenProfile && (
-                <button
-                  type="button"
-                  id="btn-dashboard-edit-profile"
-                  onClick={onOpenProfile}
-                  className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-white/10 hover:bg-white/20 text-cyan-200 border border-white/10 transition-colors cursor-pointer"
-                  title="Editar Perfil do Corretor"
-                >
-                  Editar Perfil
-                </button>
-              )}
             </div>
             <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-xl">
               {clients.length === 0
@@ -219,28 +207,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            {/* Primary Action Button */}
             <button
               onClick={onOpenNewClient}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold shadow-lg shadow-cyan-600/30 transition-all cursor-pointer active:scale-95"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold shadow-lg shadow-cyan-600/30 transition-all cursor-pointer active:scale-95"
             >
-              <span>+ Cadastrar Cliente</span>
-            </button>
-
-            <button
-              onClick={handleExportExcel}
-              className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-emerald-700/80 hover:bg-emerald-600 text-white text-xs font-bold border border-emerald-500/40 shadow-md shadow-emerald-950/30 transition-all cursor-pointer active:scale-95"
-              title="Exportar planilha Excel (.xlsx) da carteira"
-            >
-              <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
-              <span>Exportar Excel</span>
+              <Plus className="w-4 h-4" />
+              <span>Cadastrar Cliente</span>
             </button>
 
             <button
               onClick={onNavigateToClients}
-              className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all cursor-pointer"
+              className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold border border-white/20 transition-all cursor-pointer"
             >
               <span>Ver Carteira</span>
-              <ChevronRight className="w-4 h-4" />
+              <ChevronRight className="w-4 h-4 text-slate-300" />
             </button>
           </div>
         </div>
@@ -310,7 +291,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               {renewalRatePercentage}% renovações
             </span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">
+          <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium mt-1">
             {renewalClientsCount} de renovação • {newClientsCount} clientes novos
           </p>
         </div>
@@ -318,7 +299,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         {/* Card 2: Previsão de Comissão Mês Atual */}
         <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md transition-shadow">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+            <span className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
               Previsão Comissão Mês
             </span>
             <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400">
@@ -330,7 +311,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               {formatCurrency(fallbackMonthlyCommission)}
             </span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">
+          <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium mt-1">
             Total comissões carteira: {formatCurrency(totalCommissionsEarned)}
           </p>
         </div>
@@ -338,7 +319,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         {/* Card 3: Volume Total de Prêmios */}
         <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md transition-shadow">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+            <span className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
               Volume em Prêmios
             </span>
             <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400">
@@ -350,7 +331,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               {formatCurrency(totalPremiums)}
             </span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">
+          <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium mt-1">
             Seguro médio: {formatCurrency(clients.length > 0 ? totalPremiums / clients.length : 0)}
           </p>
         </div>
@@ -358,7 +339,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         {/* Card 4: Apólices a Vencer (Alertas) */}
         <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md transition-shadow">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+            <span className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
               A Vencer em 30 Dias
             </span>
             <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400">
@@ -369,11 +350,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <span className="text-2xl font-extrabold text-rose-600 dark:text-rose-400">
               {allAlerts.length}
             </span>
-            <span className="text-xs font-bold text-rose-600 bg-rose-50 dark:bg-rose-950/60 px-1.5 py-0.5 rounded">
+            <span className="text-xs font-bold text-rose-700 bg-rose-100 dark:bg-rose-950/80 dark:text-rose-300 px-1.5 py-0.5 rounded border border-rose-200 dark:border-rose-800">
               {redAlertsCount} críticos
             </span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">
+          <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium mt-1">
             {orangeAlertsCount} em 15d • {yellowAlertsCount} em 30d
           </p>
         </div>
@@ -417,11 +398,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     onClick={() => setAlertFilter('red')}
                     className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                       alertFilter === 'red'
-                        ? 'bg-rose-500 text-white shadow-xs'
+                        ? 'bg-rose-600 text-white shadow-xs'
                         : 'text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40'
                     }`}
                   >
-                    ≤ 10d ({redAlertsCount})
+                    ≤ 3d ({redAlertsCount})
                   </button>
 
                   <button
@@ -432,18 +413,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         : 'text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40'
                     }`}
                   >
-                    ≤ 15d ({orangeAlertsCount})
+                    4-15d ({orangeAlertsCount})
                   </button>
 
                   <button
                     onClick={() => setAlertFilter('yellow')}
                     className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                       alertFilter === 'yellow'
-                        ? 'bg-yellow-500 text-white shadow-xs'
+                        ? 'bg-yellow-500 text-slate-900 shadow-xs'
                         : 'text-yellow-700 dark:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-950/40'
                     }`}
                   >
-                    ≤ 30d ({yellowAlertsCount})
+                    16-30d ({yellowAlertsCount})
                   </button>
                 </div>
 
@@ -465,17 +446,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                   Nenhuma apólice encontrada para o filtro selecionado.
                 </p>
-                <p className="text-[11px] text-slate-400 mt-0.5">
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
                   Sua carteira de seguros está com todos os vencimentos em dia!
                 </p>
               </div>
             ) : (
               <div className="space-y-3">
                 {filteredAlerts.map((item) => {
-                  const { client, daysRemaining, alertLevel, formattedEndDate } = item;
-                  const isRed = alertLevel === 'red' || alertLevel === 'expired';
-                  const isOrange = alertLevel === 'orange';
-                  const isYellow = alertLevel === 'yellow';
+                  const { client, daysRemaining, formattedEndDate } = item;
+                  const isRed = daysRemaining <= 3;
+                  const isOrange = daysRemaining >= 4 && daysRemaining <= 15;
+                  const isYellow = daysRemaining > 15;
 
                   const whatsappRenewalUrl = getWhatsAppLink(
                     client.phone,
@@ -487,7 +468,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       key={client.id}
                       className={`p-4 rounded-2xl border transition-all ${
                         isRed
-                          ? 'bg-rose-50/40 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/60 hover:border-rose-300'
+                          ? 'bg-rose-50/50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/60 hover:border-rose-300'
                           : isOrange
                           ? 'bg-amber-50/40 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/60 hover:border-amber-300'
                           : 'bg-yellow-50/30 dark:bg-yellow-950/15 border-yellow-200 dark:border-yellow-900/60 hover:border-yellow-300'
@@ -498,24 +479,24 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         {/* Left: Client info & Badges */}
                         <div className="space-y-1.5">
                           <div className="flex flex-wrap items-center gap-2">
-                            {/* Visual Alert Badge */}
+                            {/* Urgency Badge */}
                             {isRed && (
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase bg-rose-600 text-white tracking-wider animate-pulse">
-                                {daysRemaining < 0 ? `Vencida (${Math.abs(daysRemaining)}d)` : daysRemaining === 0 ? 'Vence Hoje!' : `Vence em ${daysRemaining} dias`}
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase bg-rose-600 text-white tracking-wider animate-pulse shadow-xs">
+                                {daysRemaining < 0 ? `Vencida (${Math.abs(daysRemaining)}d)` : daysRemaining === 0 ? 'Vence Hoje!' : `Vence em ${daysRemaining}d`}
                               </span>
                             )}
                             {isOrange && (
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase bg-amber-500 text-white tracking-wider">
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase bg-amber-500 text-white tracking-wider shadow-xs">
                                 Vence em {daysRemaining} dias
                               </span>
                             )}
                             {isYellow && (
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase bg-yellow-500 text-slate-900 tracking-wider">
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase bg-yellow-500 text-slate-900 tracking-wider shadow-xs">
                                 Vence em {daysRemaining} dias
                               </span>
                             )}
 
-                            {/* Requirement 3: Visual Identification of "Renovação" vs "Cliente Novo" */}
+                            {/* Client Type Badge */}
                             {client.clientType === 'Renovação' ? (
                               <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
                                 ↺ Cliente de Renovação
@@ -526,7 +507,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               </span>
                             )}
 
-                            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                            <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
                               Vigência até: <strong className="text-slate-800 dark:text-slate-200">{formattedEndDate}</strong>
                             </span>
                           </div>
@@ -557,10 +538,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                           {/* Financials in alert */}
                           <div className="flex items-center gap-3 text-xs pt-1">
-                            <span className="text-slate-500">
+                            <span className="text-slate-600 dark:text-slate-400">
                               Seguro: <strong className="text-slate-800 dark:text-slate-200">{formatCurrency(client.totalInsuredValue)}</strong>
                             </span>
-                            <span className="text-slate-500">
+                            <span className="text-slate-600 dark:text-slate-400">
                               Comissão ({client.commissionRate}%): <strong className="text-emerald-600 dark:text-emerald-400 font-bold">{formatCurrency(client.commissionAmount)}</strong>
                             </span>
                           </div>
@@ -574,7 +555,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             href={whatsappRenewalUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-colors cursor-pointer"
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer hover:scale-[1.02]"
                             title="Enviar proposta de renovação pronta via WhatsApp"
                           >
                             <MessageSquare className="w-3.5 h-3.5" />
@@ -582,11 +563,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           </a>
 
                           <div className="flex items-center gap-1.5">
-                            {/* Requirement 3: Shortcut to View/Download Policy Document */}
+                            {/* Shortcut to View/Download Policy Document */}
                             {client.document ? (
                               <button
                                 onClick={() => onViewDocument(client)}
-                                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 text-slate-700 dark:text-slate-300 text-xs font-semibold transition-colors cursor-pointer"
+                                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer shadow-2xs"
                                 title="Visualizar ou baixar PDF da apólice anexada"
                               >
                                 <FileText className="w-3.5 h-3.5 text-rose-500" />
@@ -595,7 +576,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             ) : (
                               <button
                                 onClick={() => onEditClient(client)}
-                                className="px-2 py-1 rounded-lg text-[11px] text-slate-400 hover:text-cyan-600 cursor-pointer"
+                                className="px-2 py-1 rounded-lg text-[11px] font-semibold text-slate-500 hover:text-cyan-600 cursor-pointer"
                                 title="Anexar PDF da apólice"
                               >
                                 + Anexar PDF
@@ -604,7 +585,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                             <button
                               onClick={() => onViewClientDetails(client)}
-                              className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-colors cursor-pointer"
+                              className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-colors cursor-pointer"
                               title="Ver ficha completa"
                             >
                               <Eye className="w-4 h-4" />
@@ -656,9 +637,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
 
             {upcomingBirthdays.length === 0 ? (
-              <p className="text-xs text-slate-400 italic text-center py-4">
-                Nenhum aniversário nos próximos 45 dias.
-              </p>
+              <div className="text-center py-8 px-4 bg-purple-50/50 dark:bg-purple-950/20 rounded-2xl border border-dashed border-purple-200/80 dark:border-purple-900/40 my-2">
+                <div className="w-12 h-12 rounded-2xl bg-purple-100 dark:bg-purple-900/50 text-purple-600 dark:text-purple-300 flex items-center justify-center mx-auto mb-2.5 shadow-xs">
+                  <Cake className="w-6 h-6" />
+                </div>
+                <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                  Nenhum aniversariante próximo
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 max-w-[210px] mx-auto leading-relaxed">
+                  Nenhum cliente cadastrado faz aniversário nos próximos 45 dias.
+                </p>
+              </div>
             ) : (
               <div className="divide-y divide-slate-100 dark:divide-slate-800">
                 {upcomingBirthdays.slice(0, 5).map((item) => {

@@ -77,7 +77,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       setBrokerageName(currentUser.brokerageName || '');
       setSusep(currentUser.susep || '');
 
-      // Reset password states
+      // Reset loader & feedback states explicitly upon modal open
+      setSavingProfile(false);
+      setSavingPassword(false);
       setNewPassword('');
       setConfirmPassword('');
       setProfileSuccess(null);
@@ -116,6 +118,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       susep: susep.trim()
     };
 
+    // 1. Immediate local state & storage update for instant UI responsiveness
+    saveUserProfile(updatedUser);
+    onUpdateUser(updatedUser);
+
     setSavingProfile(true);
 
     try {
@@ -123,12 +129,13 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
         await firebaseUpdateUserProfile(updatedUser);
       }
 
-      saveUserProfile(updatedUser);
-      onUpdateUser(updatedUser);
-      setProfileSuccess('Dados do perfil salvos com sucesso!');
+      setProfileSuccess('Perfil atualizado com sucesso!');
+      
+      // Close modal smoothly after brief confirmation
       setTimeout(() => {
         setProfileSuccess(null);
-      }, 3500);
+        onClose();
+      }, 300);
     } catch (err: unknown) {
       console.error('Failed to update profile:', err);
       const errMsg = (err as Error)?.message || 'Erro ao atualizar dados no Firebase.';
@@ -168,12 +175,14 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       if (isFirebase) {
         await firebaseUpdateUserPassword(newPassword);
       }
-      setPasswordSuccess('Senha atualizada com sucesso no Firebase Authentication!');
+      setPasswordSuccess('Senha alterada com sucesso!');
       setNewPassword('');
       setConfirmPassword('');
+      
       setTimeout(() => {
         setPasswordSuccess(null);
-      }, 4000);
+        onClose();
+      }, 400);
     } catch (err: unknown) {
       console.error('Failed to update password:', err);
       const errMsg = (err as Error)?.message || 'Erro ao alterar a senha.';
