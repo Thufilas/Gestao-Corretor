@@ -33,6 +33,17 @@ export interface Client {
   updatedAt: string;
 }
 
+export type UserRole = 'admin' | 'subadmin' | 'broker';
+
+export interface Brokerage {
+  id: string;
+  name: string;
+  subAdminId?: string;
+  subAdminName?: string;
+  subAdminEmail?: string;
+  createdAt: string;
+}
+
 export interface User {
   id: string;
   name: string;
@@ -41,6 +52,8 @@ export interface User {
   email: string;
   susep?: string; // Registro SUSEP do Corretor
   brokerageName: string;
+  brokerageId?: string; // ID da corretora vinculada
+  role?: UserRole; // 'admin' (Master Global) | 'subadmin' (Gestor de Corretora) | 'broker' (Corretor Padrão)
   isAdmin?: boolean;
   status?: 'active' | 'inactive';
   createdAt?: string;
@@ -49,6 +62,8 @@ export interface User {
 }
 
 export interface BrokerAccount extends User {
+  role: UserRole;
+  brokerageId: string;
   status: 'active' | 'inactive';
   clientCount: number;
   totalPremiums: number;

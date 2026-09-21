@@ -69,6 +69,7 @@ export const ClientList: React.FC<ClientListProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const brokerName = currentUser?.name || 'Corretor';
+  const brokerageName = currentUser?.brokerageName || 'Corretora';
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -487,7 +488,7 @@ export const ClientList: React.FC<ClientListProps> = ({
 
                   const whatsappRenewalUrl = getWhatsAppLink(
                     client.phone,
-                    getRenewalWhatsAppMessage(client, brokerName)
+                    getRenewalWhatsAppMessage(client, brokerName, brokerageName)
                   );
 
                   return (

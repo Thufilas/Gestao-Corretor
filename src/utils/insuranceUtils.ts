@@ -23,15 +23,46 @@ export const POPULAR_INSURERS = [
 export const ADMIN_USER_ID = 'bn5feEaSfUUClzVtFD5Q79Cx5112';
 
 /**
- * Check if the user is the system administrator
+ * Check if the user is the Super Admin Master (Global access to all brokerages)
  */
-export function isUserAdmin(user?: { id?: string; isAdmin?: boolean; email?: string } | null): boolean {
+export function isMasterAdmin(user?: { id?: string; role?: string; isAdmin?: boolean; email?: string } | null): boolean {
   if (!user) return false;
   if (user.id === ADMIN_USER_ID) return true;
-  if (user.isAdmin === true) return true;
-  // Fallback for case-insensitive admin email or specific admin id
+  if (user.role === 'admin') return true;
   if (user.email && user.email.toLowerCase() === 'admin@gestaocorretor.com.br') return true;
+  // If user has isAdmin set to true and role is NOT explicitly 'subadmin' or 'broker'
+  if (user.isAdmin === true && user.role !== 'subadmin' && user.role !== 'broker') return true;
   return false;
+}
+
+/**
+ * Check if the user is a Sub-Admin / Gestor de Corretora (Access filtered to their brokerage only)
+ */
+export function isSubAdmin(user?: { role?: string; email?: string } | null): boolean {
+  if (!user) return false;
+  return user.role === 'subadmin';
+}
+
+/**
+ * Check if the user has permission to access the Admin Panel (Master Admin OR Sub-Admin)
+ */
+export function canAccessAdminPanel(user?: { id?: string; role?: string; isAdmin?: boolean; email?: string } | null): boolean {
+  return isMasterAdmin(user) || isSubAdmin(user);
+}
+
+/**
+ * Check if the user is a standard broker (No access to Admin Panel)
+ */
+export function isStandardBroker(user?: { id?: string; role?: string; isAdmin?: boolean; email?: string } | null): boolean {
+  return !canAccessAdminPanel(user);
+}
+
+/**
+ * Check if the user is an admin or sub-admin (backwards compatibility)
+ */
+export function isUserAdmin(user?: { id?: string; isAdmin?: boolean; role?: string; email?: string } | null): boolean {
+  if (!user) return false;
+  return canAccessAdminPanel(user);
 }
 
 /**
@@ -229,32 +260,56 @@ export function getWhatsAppLink(phone: string, text: string): string {
 /**
  * Pre-composed WhatsApp text for policy renewal
  */
-export function getRenewalWhatsAppMessage(client: Client, brokerName: string): string {
+export function getRenewalWhatsAppMessage(
+  client: Client,
+  brokerName?: string,
+  brokerageName?: string
+): string {
+  const clientName = client.name?.trim() || 'Cliente';
+  const finalBrokerName = brokerName?.trim() || 'seu corretor';
+  const finalBrokerageName = brokerageName?.trim() || 'nossa corretora';
+  const vehicle = client.vehicleModel?.trim() || 'veículo';
+  const insurer = client.insuranceCompany?.trim() || 'seguradora';
+  const expiryDate = formatDateBR(client.endDate);
   const days = getDaysRemaining(client.endDate);
-  const formattedDate = formatDateBR(client.endDate);
-  let urgency = `vence no dia ${formattedDate} (em ${days} dias)`;
-  if (days === 0) urgency = 'vence HOJE!';
-  if (days < 0) urgency = `venceu no dia ${formattedDate}`;
 
-  return `Olá ${client.name}, tudo bem? Aqui é o ${brokerName}, seu corretor de seguros. 
+  let daysRemainingText = `em ${days} dias`;
+  if (days === 1) {
+    daysRemainingText = 'em 1 dia';
+  } else if (days === 0) {
+    daysRemainingText = 'hoje';
+  } else if (days < 0) {
+    daysRemainingText = `vencida há ${Math.abs(days)} dias`;
+  }
 
-Gostaria de lembrar que a apólice do seu veículo (${client.vehicleModel || 'seguro auto'}) junto à ${client.insuranceCompany} ${urgency}.
+  return `Olá, ${clientName}, tudo bem? Aqui é o ${finalBrokerName}, da ${finalBrokerageName}.
 
-Já estou preparando as melhores condições e opções de renovação com descontos exclusivos para você. Podemos conversar para alinharmos os detalhes?`;
+Passando para lembrar que a apólice do seu ${vehicle} na ${insurer} vence no dia ${expiryDate} (${daysRemainingText}).
+
+Já estou preparando as melhores condições e opções de renovação com foco no seu custo-benefício.
+
+Podemos conversar para alinharmos os detalhes da proposta?`;
 }
 
 /**
  * Pre-composed WhatsApp text for birthday greetings
  */
-export function getBirthdayWhatsAppMessage(client: Client, brokerName: string, brokerageName?: string): string {
-  const firstName = client.name.trim().split(' ')[0];
-  const brandText = brokerageName ? ` e toda a equipe da ${brokerageName}` : '';
+export function getBirthdayWhatsAppMessage(
+  client: Client,
+  brokerName?: string,
+  brokerageName?: string
+): string {
+  const clientName = client.name?.trim() || 'Cliente';
+  const finalBrokerName = brokerName?.trim() || 'seu corretor';
+  const finalBrokerageName = brokerageName?.trim() || 'nossa corretora';
 
-  return `Olá, ${firstName}! 🎂🎉
+  return `Olá, ${clientName}! Aqui é o ${finalBrokerName}, da ${finalBrokerageName}.
 
-Aqui é o ${brokerName}${brandText}. Gostaria de lhe desejar um Feliz Aniversário! Que este novo ciclo seja repleto de muita saúde, paz, proteção e grandes realizações.
+Passando para te desejar um Feliz Aniversário!
 
-É uma alegria ter você conosco. Conte sempre com a gente para cuidar da sua segurança e tranquilidade. Parabéns pelo seu dia!`;
+Que o seu novo ano traga muita saúde, paz, conquistas e momentos felizes. É um prazer enorme ter você conosco.
+
+Aproveite muito o seu dia! Parabéns!`;
 }
 
 /**

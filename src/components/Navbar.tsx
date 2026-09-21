@@ -9,10 +9,11 @@ import {
   Moon, 
   Sun, 
   User as UserIcon,
-  Crown
+  Crown,
+  Briefcase
 } from 'lucide-react';
 import { User } from '../types';
-import { getUserFirstName, isUserAdmin } from '../utils/insuranceUtils';
+import { getUserFirstName, canAccessAdminPanel, isMasterAdmin, isSubAdmin } from '../utils/insuranceUtils';
 
 interface NavbarProps {
   currentTab: 'dashboard' | 'clients' | 'alerts' | 'birthdays' | 'admin';
@@ -39,7 +40,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleTheme,
   criticalAlertsCount
 }) => {
-  const isAdmin = isUserAdmin(user);
+  const hasAdminAccess = canAccessAdminPanel(user);
+  const isMaster = isMasterAdmin(user);
+  const isSub = isSubAdmin(user);
 
   return (
     <header className="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors">
@@ -126,25 +129,35 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span>Aniversariantes</span>
             </button>
 
-            {/* Exclusive Admin Navigation Tab for System Administrator */}
-            {isAdmin && (
+            {/* Exclusive Admin Navigation Tab for Master Admin and Sub-Admin */}
+            {hasAdminAccess && (
               <button
                 id="nav-tab-admin"
                 onClick={() => setCurrentTab('admin')}
                 className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
                   currentTab === 'admin'
-                    ? 'bg-amber-500 text-white shadow-xs font-bold'
-                    : 'text-amber-700 dark:text-amber-300 hover:text-amber-800 dark:hover:text-amber-200 hover:bg-amber-100/80 dark:hover:bg-amber-950/60'
+                    ? isMaster 
+                      ? 'bg-amber-500 text-white shadow-xs font-bold'
+                      : 'bg-cyan-600 text-white shadow-xs font-bold'
+                    : isMaster
+                      ? 'text-amber-700 dark:text-amber-300 hover:text-amber-800 dark:hover:text-amber-200 hover:bg-amber-100/80 dark:hover:bg-amber-950/60'
+                      : 'text-cyan-700 dark:text-cyan-300 hover:text-cyan-800 dark:hover:text-cyan-200 hover:bg-cyan-100/80 dark:hover:bg-cyan-950/60'
                 }`}
               >
-                <Crown className="w-5 h-5 shrink-0 text-amber-500 dark:text-amber-400" />
-                <span>Painel Admin</span>
+                {isMaster ? (
+                  <Crown className="w-4 h-4 shrink-0 text-amber-300" />
+                ) : (
+                  <ShieldCheck className="w-4 h-4 shrink-0 text-cyan-300" />
+                )}
+                <span>{isMaster ? 'Painel Admin' : 'Gestão da Equipe'}</span>
                 <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
                   currentTab === 'admin'
-                    ? 'bg-amber-600/70 text-amber-100'
-                    : 'bg-amber-200/80 dark:bg-amber-950/90 text-amber-800 dark:text-amber-300 border border-amber-300/80 dark:border-amber-800/80'
+                    ? 'bg-black/20 text-white'
+                    : isMaster
+                      ? 'bg-amber-200/80 dark:bg-amber-950/90 text-amber-800 dark:text-amber-300 border border-amber-300/80 dark:border-amber-800/80'
+                      : 'bg-cyan-200/80 dark:bg-cyan-950/90 text-cyan-800 dark:text-cyan-300 border border-cyan-300/80 dark:border-cyan-800/80'
                 }`}>
-                  Master
+                  {isMaster ? 'Master' : 'Gestor'}
                 </span>
               </button>
             )}
@@ -162,20 +175,33 @@ export const Navbar: React.FC<NavbarProps> = ({
               title="Editar Perfil do Corretor"
             >
               <div className={`w-8 h-8 rounded-xl text-white flex items-center justify-center text-xs font-bold shadow-xs group-hover:scale-105 transition-transform shrink-0 ${
-                isAdmin 
+                isMaster 
                   ? 'bg-gradient-to-tr from-amber-500 to-amber-600' 
-                  : 'bg-gradient-to-tr from-cyan-600 to-blue-600'
+                  : isSub
+                    ? 'bg-gradient-to-tr from-purple-600 to-indigo-600'
+                    : 'bg-gradient-to-tr from-cyan-600 to-blue-600'
               }`}>
-                {isAdmin ? <Crown className="w-4 h-4 text-white" /> : <UserIcon className="w-4 h-4 text-white" />}
+                {isMaster ? (
+                  <Crown className="w-4 h-4 text-white" />
+                ) : isSub ? (
+                  <ShieldCheck className="w-4 h-4 text-white" />
+                ) : (
+                  <UserIcon className="w-4 h-4 text-white" />
+                )}
               </div>
 
               <div className="flex items-center gap-2">
                 <span id="nav-user-first-name" className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors whitespace-nowrap">
                   {getUserFirstName(user)}
                 </span>
-                {isAdmin && (
+                {isMaster && (
                   <span className="px-1.5 py-0.5 text-[10px] font-extrabold rounded-md bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-300 dark:border-amber-800/80 uppercase tracking-wider whitespace-nowrap">
                     ADMIN
+                  </span>
+                )}
+                {isSub && (
+                  <span className="px-1.5 py-0.5 text-[10px] font-extrabold rounded-md bg-purple-100 text-purple-800 dark:bg-purple-950/80 dark:text-purple-300 border border-purple-300 dark:border-purple-800/80 uppercase tracking-wider whitespace-nowrap">
+                    GESTOR
                   </span>
                 )}
               </div>
@@ -249,15 +275,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span>Niver</span>
           </button>
 
-          {isAdmin && (
+          {hasAdminAccess && (
             <button
               onClick={() => setCurrentTab('admin')}
               className={`flex flex-col items-center py-1 px-2 font-bold ${
-                currentTab === 'admin' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'
+                currentTab === 'admin' 
+                  ? isMaster ? 'text-amber-600 dark:text-amber-400' : 'text-cyan-600 dark:text-cyan-400'
+                  : 'text-slate-500'
               }`}
             >
-              <Crown className="w-4 h-4 text-amber-500" />
-              <span>Admin</span>
+              {isMaster ? <Crown className="w-4 h-4 text-amber-500" /> : <ShieldCheck className="w-4 h-4 text-cyan-500" />}
+              <span>{isMaster ? 'Admin' : 'Equipe'}</span>
             </button>
           )}
         </div>

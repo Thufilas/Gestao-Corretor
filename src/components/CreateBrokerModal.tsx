@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   UserPlus, 
@@ -6,43 +6,88 @@ import {
   Building2, 
   Mail, 
   Lock, 
-  KeyRound, 
   ShieldCheck, 
   Loader2, 
   CheckCircle2, 
   AlertCircle,
   Eye,
   EyeOff,
-  Flame
+  Flame,
+  Crown,
+  Users,
+  Briefcase
 } from 'lucide-react';
-import { BrokerAccount } from '../types';
-import { createBrokerAccount } from '../services/adminService';
+import { BrokerAccount, User, UserRole, Brokerage } from '../types';
+import { createBrokerAccount, loadAllBrokerages, createBrokerage } from '../services/adminService';
 import { isFirebaseConfigured } from '../services/firebase';
+import { isMasterAdmin, isSubAdmin } from '../utils/insuranceUtils';
 
 interface CreateBrokerModalProps {
   isOpen: boolean;
   onClose: () => void;
   onBrokerCreated: (newBroker: BrokerAccount) => void;
+  currentUser?: User | null;
+  defaultBrokerageId?: string;
 }
 
 export const CreateBrokerModal: React.FC<CreateBrokerModalProps> = ({
   isOpen,
   onClose,
-  onBrokerCreated
+  onBrokerCreated,
+  currentUser,
+  defaultBrokerageId
 }) => {
+  const isMaster = isMasterAdmin(currentUser);
+  const isSub = isSubAdmin(currentUser);
+
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [tempPassword, setTempPassword] = useState('Corretor@2025');
-  const [brokerageName, setBrokerageName] = useState('');
   const [susep, setSusep] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+
+  // Profile & Brokerage states
+  const [role, setRole] = useState<UserRole>('broker');
+  const [brokerages, setBrokerages] = useState<Brokerage[]>([]);
+  const [selectedBrokerageId, setSelectedBrokerageId] = useState<string>('');
+  const [isCreatingNewBrokerage, setIsCreatingNewBrokerage] = useState(false);
+  const [newBrokerageName, setNewBrokerageName] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
   const isFirebase = isFirebaseConfigured();
+
+  // Reset & prepare initial state on open
+  useEffect(() => {
+    if (isOpen) {
+      const allBr = loadAllBrokerages();
+      setBrokerages(allBr);
+
+      if (isSub && currentUser) {
+        // Sub-Admin: strictly locked to their brokerage & standard broker role
+        setRole('broker');
+        setSelectedBrokerageId(currentUser.brokerageId || (allBr[0]?.id ?? ''));
+        setIsCreatingNewBrokerage(false);
+      } else {
+        // Master Admin: default to requested brokerage or first available
+        setRole('broker');
+        if (defaultBrokerageId && defaultBrokerageId !== 'all') {
+          setSelectedBrokerageId(defaultBrokerageId);
+        } else if (allBr.length > 0) {
+          // If default is 'corretora-finage' or first
+          const defaultBr = allBr.find(b => b.id === 'corretora-finage') || allBr[0];
+          setSelectedBrokerageId(defaultBr.id);
+        }
+        setIsCreatingNewBrokerage(false);
+      }
+
+      setError(null);
+      setSuccess(null);
+    }
+  }, [isOpen, isSub, currentUser, defaultBrokerageId]);
 
   if (!isOpen) return null;
 
@@ -52,7 +97,7 @@ export const CreateBrokerModal: React.FC<CreateBrokerModalProps> = ({
     setSuccess(null);
 
     if (!firstName.trim()) {
-      setError('Por favor, informe o Nome do corretor.');
+      setError('Por favor, informe o Nome do profissional.');
       return;
     }
 
@@ -66,19 +111,53 @@ export const CreateBrokerModal: React.FC<CreateBrokerModalProps> = ({
       return;
     }
 
+    let finalBrokerageId = selectedBrokerageId;
+    let finalBrokerageName = '';
+
+    if (isSub && currentUser) {
+      finalBrokerageId = currentUser.brokerageId || selectedBrokerageId;
+      finalBrokerageName = currentUser.brokerageName;
+    } else {
+      if (isCreatingNewBrokerage) {
+        if (!newBrokerageName.trim()) {
+          setError('Por favor, digite o Nome da Nova Corretora.');
+          return;
+        }
+        const createdBr = createBrokerage(newBrokerageName.trim());
+        finalBrokerageId = createdBr.id;
+        finalBrokerageName = createdBr.name;
+      } else {
+        const found = brokerages.find(b => b.id === selectedBrokerageId);
+        if (found) {
+          finalBrokerageName = found.name;
+        } else {
+          setError('Por favor, selecione a Corretora vinculada.');
+          return;
+        }
+      }
+    }
+
     setLoading(true);
 
     try {
-      const created = createBrokerAccount({
+      const created = await createBrokerAccount({
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         email: email.trim(),
-        brokerageName: brokerageName.trim() || 'Minha Corretora de Seguros',
+        brokerageName: finalBrokerageName,
+        brokerageId: finalBrokerageId,
+        role: isSub ? 'broker' : role,
         susep: susep.trim(),
-        initialPassword: tempPassword
+        initialPassword: tempPassword,
+        creatorUser: currentUser
       });
 
-      setSuccess(`Corretor(a) ${created.name} cadastrado(a) com sucesso!`);
+      const roleLabel = created.role === 'subadmin' ? 'Sub-Admin / Gestor(a)' : 'Corretor(a) Padrão';
+      if (isFirebase) {
+        setSuccess(`${roleLabel} ${created.name} criado(a) com sucesso no Firebase Authentication! O login imediato com a senha informada já está ativo.`);
+      } else {
+        setSuccess(`${roleLabel} ${created.name} cadastrado(a) com sucesso!`);
+      }
       
       setTimeout(() => {
         onBrokerCreated(created);
@@ -86,19 +165,22 @@ export const CreateBrokerModal: React.FC<CreateBrokerModalProps> = ({
         setFirstName('');
         setLastName('');
         setEmail('');
-        setBrokerageName('');
         setSusep('');
         setTempPassword('Corretor@2025');
+        setIsCreatingNewBrokerage(false);
+        setNewBrokerageName('');
         setSuccess(null);
         setLoading(false);
         onClose();
-      }, 900);
+      }, 1200);
     } catch (err: unknown) {
       console.error('Error creating broker:', err);
-      setError((err as Error)?.message || 'Erro ao cadastrar novo corretor.');
+      setError((err as Error)?.message || 'Erro ao cadastrar novo usuário.');
       setLoading(false);
     }
   };
+
+  const subAdminBrokerageName = currentUser?.brokerageName || 'Sua Corretora';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200">
@@ -107,15 +189,23 @@ export const CreateBrokerModal: React.FC<CreateBrokerModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-blue-600 flex items-center justify-center text-white shadow-md shadow-cyan-600/20">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-md ${
+              isMaster 
+                ? 'bg-gradient-to-tr from-amber-500 to-amber-600 shadow-amber-500/20'
+                : 'bg-gradient-to-tr from-cyan-600 to-blue-600 shadow-cyan-600/20'
+            }`}>
               <UserPlus className="w-5 h-5" />
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
-                Cadastrar Novo Corretor
+                {isSub ? 'Cadastrar Corretor na Equipe' : 'Cadastrar Utilizador / Corretor'}
               </h2>
               <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-                <span>Crie credenciais e libere o acesso a um novo profissional</span>
+                {isSub ? (
+                  <span>Adicione um novo profissional para a sua corretora</span>
+                ) : (
+                  <span>Cadastre sub-admins gestores ou corretores para qualquer corretora</span>
+                )}
                 {isFirebase && (
                   <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800/60">
                     <Flame className="w-3 h-3 fill-amber-500/30" />
@@ -152,10 +242,181 @@ export const CreateBrokerModal: React.FC<CreateBrokerModalProps> = ({
             </div>
           )}
 
+          {/* Role & Brokerage Selection Section */}
+          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/70 space-y-3">
+            
+            {/* 1. Profile / Role Selection */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                Perfil de Acesso *
+              </label>
+
+              {isSub ? (
+                // Sub-Admin: Profile is fixed to "Corretor Padrão"
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-cyan-100 dark:bg-cyan-950/60 text-cyan-700 dark:text-cyan-300 flex items-center justify-center">
+                      <Briefcase className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="font-bold text-slate-900 dark:text-white block">Corretor Padrão</span>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Acesso individual à carteira de clientes e apólices
+                      </span>
+                    </div>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600">
+                    Travado (Equipe)
+                  </span>
+                </div>
+              ) : (
+                // Master Admin: Can choose between "Corretor Padrão" or "Sub-Admin"
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRole('broker')}
+                    className={`flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      role === 'broker'
+                        ? 'bg-white dark:bg-slate-800 border-cyan-500 ring-2 ring-cyan-500/20 shadow-xs'
+                        : 'bg-white/60 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                      role === 'broker'
+                        ? 'bg-cyan-600 text-white'
+                        : 'bg-slate-100 dark:bg-slate-700 text-slate-500'
+                    }`}>
+                      <Briefcase className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="font-bold text-xs text-slate-900 dark:text-white block">
+                        Corretor Padrão
+                      </span>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-2">
+                        Opera contratos e clientes individuais
+                      </span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setRole('subadmin')}
+                    className={`flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      role === 'subadmin'
+                        ? 'bg-white dark:bg-slate-800 border-amber-500 ring-2 ring-amber-500/20 shadow-xs'
+                        : 'bg-white/60 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                      role === 'subadmin'
+                        ? 'bg-amber-500 text-white'
+                        : 'bg-slate-100 dark:bg-slate-700 text-slate-500'
+                    }`}>
+                      <Crown className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="font-bold text-xs text-slate-900 dark:text-white block">
+                        Sub-Admin / Gestor
+                      </span>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-2">
+                        Gerencia a equipe da sua corretora
+                      </span>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 2. Brokerage (Corretora) Selection */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Corretora de Seguros *
+              </label>
+
+              {isSub ? (
+                // Sub-Admin: Locked to their own brokerage
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                    <span className="font-bold text-slate-900 dark:text-white truncate">
+                      {subAdminBrokerageName}
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-semibold text-cyan-700 dark:text-cyan-300 bg-cyan-50 dark:bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-200 dark:border-cyan-800">
+                    Sua Empresa
+                  </span>
+                </div>
+              ) : (
+                // Master Admin: Can pick existing brokerage or create new
+                <div className="space-y-2">
+                  {!isCreatingNewBrokerage ? (
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                        <select
+                          id="select-brokerage"
+                          value={selectedBrokerageId}
+                          onChange={(e) => {
+                            if (e.target.value === '__new__') {
+                              setIsCreatingNewBrokerage(true);
+                            } else {
+                              setSelectedBrokerageId(e.target.value);
+                            }
+                          }}
+                          className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500 text-slate-900 dark:text-white"
+                        >
+                          {brokerages.map(b => (
+                            <option key={b.id} value={b.id}>
+                              {b.name} {b.subAdminName ? `(Gestor: ${b.subAdminName})` : ''}
+                            </option>
+                          ))}
+                          <option value="__new__">+ Cadastrar Nova Corretora...</option>
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsCreatingNewBrokerage(true)}
+                        className="px-3 py-2 rounded-xl text-xs font-semibold bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 whitespace-nowrap cursor-pointer"
+                      >
+                        + Nova
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-semibold text-amber-900 dark:text-amber-200">
+                        <span>Cadastrar Nova Empresa / Corretora</span>
+                        <button
+                          type="button"
+                          onClick={() => setIsCreatingNewBrokerage(false)}
+                          className="text-[11px] text-slate-500 hover:underline cursor-pointer"
+                        >
+                          Cancelar / Escolher existente
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                        <input
+                          type="text"
+                          required
+                          placeholder="Ex: Finage Corretora de Seguros"
+                          value={newBrokerageName}
+                          onChange={(e) => setNewBrokerageName(e.target.value)}
+                          className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500 text-slate-900 dark:text-white"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+          </div>
+
+          {/* Personal & Credential Fields */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Nome do Corretor *
+                Nome do Profissional *
               </label>
               <div className="relative">
                 <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
@@ -163,7 +424,7 @@ export const CreateBrokerModal: React.FC<CreateBrokerModalProps> = ({
                   id="create-broker-firstname"
                   type="text"
                   required
-                  placeholder="Ex: Roberto"
+                  placeholder="Ex: Alberto"
                   value={firstName}
                   onChange={(e) => setFirstName(e.target.value)}
                   className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-slate-900 dark:text-white"
@@ -178,7 +439,7 @@ export const CreateBrokerModal: React.FC<CreateBrokerModalProps> = ({
               <input
                 id="create-broker-lastname"
                 type="text"
-                placeholder="Ex: Mendes Costa"
+                placeholder="Ex: Carvalho"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
                 className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-slate-900 dark:text-white"
@@ -187,7 +448,7 @@ export const CreateBrokerModal: React.FC<CreateBrokerModalProps> = ({
 
             <div className="sm:col-span-2">
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                E-mail de Acesso Profissional *
+                E-mail Profissional de Acesso *
               </label>
               <div className="relative">
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
@@ -195,26 +456,9 @@ export const CreateBrokerModal: React.FC<CreateBrokerModalProps> = ({
                   id="create-broker-email"
                   type="email"
                   required
-                  placeholder="corretor.novo@gestaocorretor.com.br"
+                  placeholder="alberto@finage.com.br"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-slate-900 dark:text-white"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Nome da Corretora
-              </label>
-              <div className="relative">
-                <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  id="create-broker-brokerage"
-                  type="text"
-                  placeholder="Ex: Mendes Seguros"
-                  value={brokerageName}
-                  onChange={(e) => setBrokerageName(e.target.value)}
                   className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-slate-900 dark:text-white"
                 />
               </div>
@@ -227,19 +471,18 @@ export const CreateBrokerModal: React.FC<CreateBrokerModalProps> = ({
               <input
                 id="create-broker-susep"
                 type="text"
-                placeholder="Ex: 10.998877/2024"
+                placeholder="Ex: 20.554102/2023"
                 value={susep}
                 onChange={(e) => setSusep(e.target.value)}
                 className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-slate-900 dark:text-white"
               />
             </div>
 
-            <div className="sm:col-span-2">
+            <div>
               <div className="flex justify-between items-center mb-1">
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Senha Temporária de Acesso *
+                  Senha Inicial de Acesso *
                 </label>
-                <span className="text-[10px] text-slate-400">O corretor poderá alterar no primeiro login</span>
               </div>
               <div className="relative">
                 <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
@@ -260,6 +503,11 @@ export const CreateBrokerModal: React.FC<CreateBrokerModalProps> = ({
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                {isFirebase 
+                  ? 'A conta e esta senha serão cadastradas diretamente no Firebase Authentication para login imediato.' 
+                  : 'Senha temporária que o corretor utilizará no primeiro acesso.'}
+              </p>
             </div>
           </div>
 
@@ -275,17 +523,23 @@ export const CreateBrokerModal: React.FC<CreateBrokerModalProps> = ({
               type="submit"
               id="btn-submit-create-broker"
               disabled={loading}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-700 active:scale-95 disabled:opacity-60 text-white text-xs font-bold shadow-md shadow-cyan-600/25 transition-all cursor-pointer"
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-white text-xs font-bold shadow-md transition-all cursor-pointer active:scale-95 disabled:opacity-60 ${
+                isMaster
+                  ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/25'
+                  : 'bg-cyan-600 hover:bg-cyan-700 shadow-cyan-600/25'
+              }`}
             >
               {loading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Cadastrando Corretor...</span>
+                  <span>Cadastrando...</span>
                 </>
               ) : (
                 <>
                   <UserPlus className="w-4 h-4" />
-                  <span>Criar Conta de Corretor</span>
+                  <span>
+                    {isSub ? 'Adicionar Corretor à Equipe' : 'Cadastrar Utilizador'}
+                  </span>
                 </>
               )}
             </button>

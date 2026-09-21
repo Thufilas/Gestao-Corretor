@@ -109,6 +109,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const brokerName = currentUser?.name || 'Corretor';
+  const brokerageName = currentUser?.brokerageName || 'Corretora';
   const allAlerts = getExpiryAlerts(clients);
   const upcomingBirthdays = getUpcomingBirthdays(clients);
 
@@ -460,7 +461,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                   const whatsappRenewalUrl = getWhatsAppLink(
                     client.phone,
-                    getRenewalWhatsAppMessage(client, brokerName)
+                    getRenewalWhatsAppMessage(client, brokerName, brokerageName)
                   );
 
                   return (
@@ -653,7 +654,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 {upcomingBirthdays.slice(0, 5).map((item) => {
                   const whatsappBdayUrl = getWhatsAppLink(
                     item.client.phone,
-                    getBirthdayWhatsAppMessage(item.client, brokerName)
+                    getBirthdayWhatsAppMessage(item.client, brokerName, brokerageName)
                   );
 
                   return (

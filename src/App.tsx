@@ -16,7 +16,7 @@ import {
   firebaseSignOut, 
   deletePolicyFromFirebaseStorage 
 } from './services/firebase';
-import { getExpiryAlerts } from './utils/insuranceUtils';
+import { getExpiryAlerts, canAccessAdminPanel } from './utils/insuranceUtils';
 import { Navbar } from './components/Navbar';
 import { Dashboard } from './components/Dashboard';
 import { ClientList } from './components/ClientList';
@@ -279,7 +279,7 @@ export default function App() {
           />
         )}
 
-        {currentTab === 'admin' && (
+        {currentTab === 'admin' && canAccessAdminPanel(currentUser) && (
           <AdminView
             currentUser={currentUser}
           />

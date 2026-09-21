@@ -24,7 +24,7 @@ import {
   isFirebaseConfigured 
 } from '../services/firebase';
 import { saveUserProfile } from '../services/storage';
-import { getUserFirstName, isUserAdmin } from '../utils/insuranceUtils';
+import { getUserFirstName, isUserAdmin, isMasterAdmin, isSubAdmin, canAccessAdminPanel } from '../utils/insuranceUtils';
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -236,8 +236,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
         {/* Content Body */}
         <div className="p-6 space-y-6 max-h-[calc(85vh-120px)] overflow-y-auto">
           
-          {/* Admin Banner & Shortcut if user is Admin */}
-          {isUserAdmin(currentUser) && (
+          {/* Role Status Banner & Shortcut */}
+          {isMasterAdmin(currentUser) ? (
             <div className="p-4 rounded-xl bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-300 dark:border-amber-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-xs shrink-0">
@@ -248,7 +248,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                     <span>Privilégio de Administrador Master</span>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Você possui permissão para gerenciar todos os corretores e suas contas.
+                    Você possui controle global de todas as corretoras, gestores e contas.
                   </p>
                 </div>
               </div>
@@ -267,7 +267,37 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 </button>
               )}
             </div>
-          )}
+          ) : isSubAdmin(currentUser) ? (
+            <div className="p-4 rounded-xl bg-gradient-to-r from-purple-500/10 via-purple-500/5 to-transparent border border-purple-300 dark:border-purple-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-purple-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <span>Sub-Admin / Gestor de Corretora</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Gestor da equipe da {currentUser.brokerageName || 'sua corretora'}.
+                  </p>
+                </div>
+              </div>
+              {onNavigateToAdmin && (
+                <button
+                  type="button"
+                  id="btn-profile-go-admin"
+                  onClick={() => {
+                    onClose();
+                    onNavigateToAdmin();
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer whitespace-nowrap"
+                >
+                  <span>Gerenciar Equipe</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          ) : null}
 
           {/* Form: Profile Information */}
           <form id="form-broker-profile" onSubmit={handleSaveProfile} className="space-y-5">

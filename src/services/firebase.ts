@@ -1,4 +1,4 @@
-import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
+import { initializeApp, getApps, getApp, deleteApp, FirebaseApp } from 'firebase/app';
 import { 
   getAuth, 
   signInWithEmailAndPassword, 
@@ -320,6 +320,124 @@ service firebase.storage {
 }`;
 
 // Firebase Auth API
+
+/**
+ * Creates a new user in Firebase Authentication directly with email and password
+ * without signing out the currently logged-in administrator.
+ * Uses an isolated secondary FirebaseApp instance.
+ */
+export async function firebaseCreateUserByAdmin(params: {
+  email: string;
+  password: string;
+  name: string;
+  firstName?: string;
+  lastName?: string;
+  brokerageName?: string;
+  brokerageId?: string;
+  role?: 'admin' | 'subadmin' | 'broker';
+  susep?: string;
+}): Promise<{ uid: string; user: User }> {
+  const config = getFirebaseConfig();
+  if (!config) {
+    throw new Error('Firebase não está configurado. Configure as chaves de acesso para criar contas no Firebase Authentication.');
+  }
+
+  const cleanEmail = params.email.trim();
+  const cleanPass = params.password;
+
+  if (!cleanEmail) {
+    throw new Error('O e-mail é obrigatório para cadastrar no Firebase Authentication.');
+  }
+  if (!cleanPass || cleanPass.length < 6) {
+    throw new Error('A senha deve conter no mínimo 6 caracteres para o Firebase Authentication.');
+  }
+
+  const fullName = params.name.trim() || [params.firstName, params.lastName].filter(Boolean).join(' ') || 'Corretor de Seguros';
+  const derivedFirstName = params.firstName?.trim() || fullName.split(/\s+/)[0] || 'Corretor';
+  const derivedLastName = params.lastName?.trim() || fullName.split(/\s+/).slice(1).join(' ') || '';
+
+  // Generate a unique temporary app name to ensure total isolation from current admin session
+  const tempAppName = `fb_admin_create_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  let tempApp: FirebaseApp | null = null;
+
+  try {
+    tempApp = initializeApp(config, tempAppName);
+    const tempAuth = getAuth(tempApp);
+
+    // Create user in Firebase Authentication
+    const credential = await createUserWithEmailAndPassword(tempAuth, cleanEmail, cleanPass);
+    const createdFbUser = credential.user;
+    const uid = createdFbUser.uid;
+
+    // Update display name on the auth profile
+    if (fullName) {
+      try {
+        await updateProfile(createdFbUser, { displayName: fullName });
+      } catch (profileErr) {
+        console.warn('Could not update displayName on new Firebase Auth user:', profileErr);
+      }
+    }
+
+    // Sign out from the temporary auth session immediately to avoid any token leak
+    try {
+      await signOut(tempAuth);
+    } catch {
+      // Ignore sign out error on temp app
+    }
+
+    const appUser: User = {
+      id: uid,
+      name: fullName,
+      firstName: derivedFirstName,
+      lastName: derivedLastName,
+      email: createdFbUser.email || cleanEmail,
+      brokerageName: params.brokerageName?.trim() || 'Minha Corretora de Seguros',
+      brokerageId: params.brokerageId,
+      susep: params.susep?.trim() || '',
+      role: params.role || 'broker',
+      isAdmin: params.role === 'admin' || params.role === 'subadmin',
+      status: 'active'
+    };
+
+    // Save profile to local storage cache and remote Firestore
+    saveUserProfile(appUser);
+    await saveUserProfileToFirestore(uid, appUser);
+
+    return { uid, user: appUser };
+  } catch (err: unknown) {
+    console.error('Firebase Auth createUser error:', err);
+    
+    // Parse common Firebase Auth errors into friendly Portuguese
+    let errorMessage = 'Erro ao criar conta no Firebase Authentication.';
+    if (err && typeof err === 'object') {
+      const code = (err as { code?: string }).code || '';
+      if (code === 'auth/email-already-in-use') {
+        errorMessage = `O e-mail "${cleanEmail}" já está cadastrado no Firebase Authentication.`;
+      } else if (code === 'auth/invalid-email') {
+        errorMessage = `O e-mail "${cleanEmail}" não possui um formato válido.`;
+      } else if (code === 'auth/weak-password') {
+        errorMessage = 'A senha fornecida é muito fraca. Utilize ao menos 6 caracteres com letras e números.';
+      } else if (code === 'auth/operation-not-allowed') {
+        errorMessage = 'O provedor Email/Senha não está habilitado no Firebase Console (Authentication > Sign-in method).';
+      } else if (code === 'auth/network-request-failed') {
+        errorMessage = 'Falha de rede ao conectar com os servidores do Firebase Auth. Verifique sua conexão.';
+      } else if ((err as Error).message) {
+        errorMessage = (err as Error).message;
+      }
+    }
+    throw new Error(errorMessage);
+  } finally {
+    // Always clean up the temporary app instance
+    if (tempApp) {
+      try {
+        await deleteApp(tempApp);
+      } catch (delErr) {
+        console.warn('Could not delete temporary Firebase app:', delErr);
+      }
+    }
+  }
+}
+
 export async function firebaseSignUp(
   email: string, 
   password: string, 

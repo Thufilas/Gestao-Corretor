@@ -7,28 +7,40 @@ import {
   Save, 
   Loader2, 
   CheckCircle2, 
-  AlertCircle 
+  AlertCircle,
+  Briefcase,
+  Crown
 } from 'lucide-react';
-import { BrokerAccount } from '../types';
+import { BrokerAccount, User, UserRole, Brokerage } from '../types';
+import { isMasterAdmin, isSubAdmin } from '../utils/insuranceUtils';
+import { loadAllBrokerages } from '../services/adminService';
 
 interface EditBrokerModalProps {
   isOpen: boolean;
   onClose: () => void;
   broker: BrokerAccount | null;
   onSave: (brokerId: string, updatedData: Partial<BrokerAccount>) => void;
+  currentUser?: User | null;
 }
 
 export const EditBrokerModal: React.FC<EditBrokerModalProps> = ({
   isOpen,
   onClose,
   broker,
-  onSave
+  onSave,
+  currentUser
 }) => {
+  const isMaster = isMasterAdmin(currentUser);
+  const isSub = isSubAdmin(currentUser);
+
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [brokerageName, setBrokerageName] = useState('');
+  const [brokerageId, setBrokerageId] = useState('');
+  const [role, setRole] = useState<UserRole>('broker');
   const [susep, setSusep] = useState('');
+  const [brokerages, setBrokerages] = useState<Brokerage[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +52,10 @@ export const EditBrokerModal: React.FC<EditBrokerModalProps> = ({
       setLastName(broker.lastName !== undefined ? broker.lastName : (broker.name ? broker.name.split(/\s+/).slice(1).join(' ') : ''));
       setEmail(broker.email || '');
       setBrokerageName(broker.brokerageName || '');
+      setBrokerageId(broker.brokerageId || '');
+      setRole(broker.role || 'broker');
       setSusep(broker.susep || '');
+      setBrokerages(loadAllBrokerages());
       setError(null);
       setSuccess(null);
     }
@@ -53,7 +68,7 @@ export const EditBrokerModal: React.FC<EditBrokerModalProps> = ({
     setError(null);
 
     if (!firstName.trim()) {
-      setError('Por favor, informe o Nome do corretor.');
+      setError('Por favor, informe o Nome do profissional.');
       return;
     }
 
@@ -66,16 +81,27 @@ export const EditBrokerModal: React.FC<EditBrokerModalProps> = ({
 
     const fullName = [firstName.trim(), lastName.trim()].filter(Boolean).join(' ');
 
-    onSave(broker.id, {
+    const updatedData: Partial<BrokerAccount> = {
       name: fullName,
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       email: email.trim(),
-      brokerageName: brokerageName.trim() || 'Minha Corretora de Seguros',
       susep: susep.trim()
-    });
+    };
 
-    setSuccess('Perfil do corretor atualizado com sucesso!');
+    // Only Master Admin can modify role and brokerage assignment
+    if (isMaster) {
+      updatedData.role = role;
+      const foundBr = brokerages.find(b => b.id === brokerageId);
+      if (foundBr) {
+        updatedData.brokerageId = foundBr.id;
+        updatedData.brokerageName = foundBr.name;
+      }
+    }
+
+    onSave(broker.id, updatedData);
+
+    setSuccess('Perfil atualizado com sucesso!');
     setTimeout(() => {
       setLoading(false);
       onClose();
@@ -94,10 +120,13 @@ export const EditBrokerModal: React.FC<EditBrokerModalProps> = ({
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
-                Editar Dados do Corretor
+                Editar Dados do Usuário
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Gerencie as informações profissionais cadastradas
+                {isSub 
+                  ? `Gerenciar membro da equipe (${broker.brokerageName})` 
+                  : 'Gerencie as informações cadastrais e permissões do corretor'
+                }
               </p>
             </div>
           </div>
@@ -124,6 +153,56 @@ export const EditBrokerModal: React.FC<EditBrokerModalProps> = ({
             <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in">
               <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
               <span>{success}</span>
+            </div>
+          )}
+
+          {/* Role & Brokerage Permission Info */}
+          {isMaster ? (
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2.5">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Perfil de Acesso
+                  </label>
+                  <select
+                    value={role}
+                    onChange={(e) => setRole(e.target.value as UserRole)}
+                    className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500 text-slate-900 dark:text-white"
+                  >
+                    <option value="broker">Corretor Padrão</option>
+                    <option value="subadmin">Sub-Admin (Gestor)</option>
+                    <option value="admin">Admin Master</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Corretora Vinculada
+                  </label>
+                  <select
+                    value={brokerageId}
+                    onChange={(e) => setBrokerageId(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500 text-slate-900 dark:text-white"
+                  >
+                    {brokerages.map(b => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-cyan-600" />
+                <span className="font-semibold text-slate-800 dark:text-slate-200">
+                  {broker.brokerageName}
+                </span>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                {broker.role === 'subadmin' ? 'Sub-Admin (Gestor)' : 'Corretor da Equipe'}
+              </span>
             </div>
           )}
 
@@ -169,22 +248,7 @@ export const EditBrokerModal: React.FC<EditBrokerModalProps> = ({
               </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Nome da Corretora
-              </label>
-              <div className="relative">
-                <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  type="text"
-                  value={brokerageName}
-                  onChange={(e) => setBrokerageName(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-slate-900 dark:text-white"
-                />
-              </div>
-            </div>
-
-            <div>
+            <div className="sm:col-span-2">
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                 Registro SUSEP
               </label>

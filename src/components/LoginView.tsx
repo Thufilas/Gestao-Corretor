@@ -15,11 +15,13 @@ import {
   EyeOff,
   KeyRound,
   Info,
-  Database
+  Briefcase,
+  Crown
 } from 'lucide-react';
 import { User as UserType } from '../types';
 import { DEFAULT_USER, saveCurrentUser, saveUserProfile } from '../services/storage';
-import { isUserAdmin } from '../utils/insuranceUtils';
+import { isUserAdmin, ADMIN_USER_ID } from '../utils/insuranceUtils';
+import { loadAllBrokers } from '../services/adminService';
 import { 
   firebaseSignIn, 
   firebaseSendPasswordReset,
@@ -160,26 +162,83 @@ export const LoginView: React.FC<LoginViewProps> = ({
       return;
     }
 
-    // Fallback if user hasn't connected Firebase yet
-    const emailNamePart = email.split('@')[0].replace(/[._-]/g, ' ');
-    const firstName = emailNamePart.split(/\s+/)[0] || 'Corretor';
-    const lastName = emailNamePart.split(/\s+/).slice(1).join(' ') || '';
-    const fullName = [firstName, lastName].filter(Boolean).join(' ') || 'Corretor';
+    // Fallback if user hasn't connected Firebase yet or local account
+    const registeredBrokers = loadAllBrokers();
+    const existingBroker = registeredBrokers.find(b => b.email.toLowerCase() === email.trim().toLowerCase());
 
-    const fallbackUser: UserType = {
-      id: `usr-${Date.now()}`,
-      name: fullName,
-      firstName,
-      lastName,
-      email: email.trim(),
-      susep: DEFAULT_USER.susep || '',
-      brokerageName: DEFAULT_USER.brokerageName || 'Corretora de Seguros',
-      isAdmin: isUserAdmin({ email: email.trim() })
-    };
-    saveUserProfile(fallbackUser);
-    saveCurrentUser(fallbackUser);
-    onLoginSuccess(fallbackUser);
+    let userToLogin: UserType;
+
+    if (existingBroker) {
+      userToLogin = {
+        id: existingBroker.id,
+        name: existingBroker.name,
+        firstName: existingBroker.firstName || existingBroker.name.split(' ')[0],
+        lastName: existingBroker.lastName || existingBroker.name.split(' ').slice(1).join(' '),
+        email: existingBroker.email,
+        susep: existingBroker.susep || '',
+        brokerageName: existingBroker.brokerageName || 'Corretora de Seguros',
+        brokerageId: existingBroker.brokerageId,
+        role: existingBroker.role || (existingBroker.id === ADMIN_USER_ID ? 'admin' : 'broker'),
+        isAdmin: existingBroker.role === 'admin' || existingBroker.id === ADMIN_USER_ID
+      };
+    } else {
+      const emailNamePart = email.split('@')[0].replace(/[._-]/g, ' ');
+      const firstName = emailNamePart.split(/\s+/)[0] || 'Corretor';
+      const lastName = emailNamePart.split(/\s+/).slice(1).join(' ') || '';
+      const fullName = [firstName, lastName].filter(Boolean).join(' ') || 'Corretor';
+
+      userToLogin = {
+        id: `usr-${Date.now()}`,
+        name: fullName,
+        firstName,
+        lastName,
+        email: email.trim(),
+        susep: DEFAULT_USER.susep || '',
+        brokerageName: DEFAULT_USER.brokerageName || 'Corretora de Seguros',
+        role: isUserAdmin({ email: email.trim() }) ? 'admin' : 'broker',
+        isAdmin: isUserAdmin({ email: email.trim() })
+      };
+    }
+
+    saveUserProfile(userToLogin);
+    saveCurrentUser(userToLogin);
+    onLoginSuccess(userToLogin);
     setLoading(false);
+  };
+
+  // Quick Role Access for seamless testing
+  const handleQuickRoleLogin = (roleType: 'master' | 'subadmin' | 'broker') => {
+    const brokersList = loadAllBrokers();
+    let target = null;
+    if (roleType === 'master') {
+      target = brokersList.find(b => b.id === ADMIN_USER_ID || b.role === 'admin') || brokersList[0];
+    } else if (roleType === 'subadmin') {
+      target = brokersList.find(b => b.role === 'subadmin' && b.brokerageId === 'corretora-finage') ||
+               brokersList.find(b => b.role === 'subadmin') || brokersList[1];
+    } else {
+      target = brokersList.find(b => b.role === 'broker' && b.brokerageId === 'corretora-finage') ||
+               brokersList.find(b => b.role === 'broker') || brokersList[2];
+    }
+
+    if (target) {
+      const user: UserType = {
+        id: target.id,
+        name: target.name,
+        firstName: target.firstName,
+        lastName: target.lastName,
+        email: target.email,
+        susep: target.susep || '',
+        brokerageName: target.brokerageName,
+        brokerageId: target.brokerageId,
+        role: target.role,
+        isAdmin: target.role === 'admin' || target.id === ADMIN_USER_ID
+      };
+      saveUserProfile(user);
+      saveCurrentUser(user);
+      onLoginSuccess(user);
+    } else {
+      handleQuickDemoLogin();
+    }
   };
 
   // Demo Mode: 100% isolated mock storage, no access to real broker database
@@ -431,22 +490,65 @@ export const LoginView: React.FC<LoginViewProps> = ({
             </p>
           </div>
 
+          {/* Quick Role Testing Selector */}
+          <div className="mt-5 pt-4 border-t border-slate-100 dark:border-slate-800/80 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
+                Simular Acesso por Perfil
+              </span>
+              <span className="text-[10px] text-slate-400">1 clique</span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1.5">
+              <button
+                type="button"
+                id="btn-quick-login-master"
+                onClick={() => handleQuickRoleLogin('master')}
+                className="flex flex-col items-center justify-center p-2 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-950/70 border border-amber-200 dark:border-amber-800/60 text-amber-900 dark:text-amber-200 text-[11px] font-semibold transition-all cursor-pointer text-center group"
+                title="Admin Master: Acesso global a todas as corretoras e equipes"
+              >
+                <Crown className="w-4 h-4 text-amber-500 mb-1 group-hover:scale-110 transition-transform" />
+                <span className="font-bold">Admin Master</span>
+                <span className="text-[9.5px] text-amber-600/80 dark:text-amber-400/80">Global</span>
+              </button>
+
+              <button
+                type="button"
+                id="btn-quick-login-subadmin"
+                onClick={() => handleQuickRoleLogin('subadmin')}
+                className="flex flex-col items-center justify-center p-2 rounded-xl bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-950/70 border border-purple-200 dark:border-purple-800/60 text-purple-900 dark:text-purple-200 text-[11px] font-semibold transition-all cursor-pointer text-center group"
+                title="Sub-Admin Gestor: Alberto na Finage Seguros (apenas sua corretora)"
+              >
+                <ShieldCheck className="w-4 h-4 text-purple-500 mb-1 group-hover:scale-110 transition-transform" />
+                <span className="font-bold">Sub-Admin</span>
+                <span className="text-[9.5px] text-purple-600/80 dark:text-purple-400/80">Finage Seguros</span>
+              </button>
+
+              <button
+                type="button"
+                id="btn-quick-login-broker"
+                onClick={() => handleQuickRoleLogin('broker')}
+                className="flex flex-col items-center justify-center p-2 rounded-xl bg-cyan-50 hover:bg-cyan-100 dark:bg-cyan-950/40 dark:hover:bg-cyan-950/70 border border-cyan-200 dark:border-cyan-800/60 text-cyan-900 dark:text-cyan-200 text-[11px] font-semibold transition-all cursor-pointer text-center group"
+                title="Corretor Padrão: Mariana na Finage Seguros (sem acesso ao admin)"
+              >
+                <Briefcase className="w-4 h-4 text-cyan-600 mb-1 group-hover:scale-110 transition-transform" />
+                <span className="font-bold">Corretor</span>
+                <span className="text-[9.5px] text-cyan-600/80 dark:text-cyan-400/80">Sem painel admin</span>
+              </button>
+            </div>
+          </div>
+
           {/* Demonstration Mode Action */}
-          <div className="mt-5 pt-4 border-t border-slate-100 dark:border-slate-800/80 space-y-2">
+          <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800/80 space-y-2">
             <button
               type="button"
               id="btn-demo-quick-login"
               onClick={handleQuickDemoLogin}
-              className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/90 dark:hover:bg-slate-700/90 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-all cursor-pointer group"
+              className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/90 dark:hover:bg-slate-700/90 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-all cursor-pointer group"
             >
-              <Sparkles className="w-4 h-4 text-cyan-600 dark:text-cyan-400 group-hover:scale-110 transition-transform" />
-              <span>Acessar Modo Demonstração (Dados Fictícios)</span>
+              <Sparkles className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 group-hover:scale-110 transition-transform" />
+              <span>Modo Demonstração Padrão</span>
             </button>
-
-            <p className="text-[10.5px] text-slate-400 text-center flex items-center justify-center gap-1 pt-1">
-              <Database className="w-3 h-3 text-slate-400" />
-              <span>O modo demo é 100% local e isolado das carteiras reais dos corretores.</span>
-            </p>
           </div>
 
         </div>

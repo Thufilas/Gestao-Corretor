@@ -66,7 +66,7 @@ export const BirthdaysView: React.FC<BirthdaysViewProps> = ({
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
   const brokerName = currentUser?.name || 'Corretor';
-  const brokerageName = currentUser?.brokerageName || '';
+  const brokerageName = currentUser?.brokerageName || 'Corretora';
 
   // Close export dropdown when clicking outside
   useEffect(() => {

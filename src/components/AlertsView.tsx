@@ -47,6 +47,7 @@ export const AlertsView: React.FC<AlertsViewProps> = ({
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
   const brokerName = currentUser?.name || 'Corretor';
+  const brokerageName = currentUser?.brokerageName || 'Corretora';
 
   // Close export dropdown when clicking outside
   useEffect(() => {
@@ -403,7 +404,7 @@ export const AlertsView: React.FC<AlertsViewProps> = ({
 
               const whatsappUrl = getWhatsAppLink(
                 client.phone,
-                getRenewalWhatsAppMessage(client, brokerName)
+                getRenewalWhatsAppMessage(client, brokerName, brokerageName)
               );
 
               return (

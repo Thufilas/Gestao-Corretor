@@ -54,18 +54,19 @@ export const ClientDetailModal: React.FC<ClientDetailModalProps> = ({
   const daysRemaining = getDaysRemaining(client.endDate);
   const alertLevel = getExpiryAlertLevel(daysRemaining);
 
-  const brokerName = currentUser?.name || 'Seu Corretor';
+  const brokerName = currentUser?.name || 'Corretor';
+  const brokerageName = currentUser?.brokerageName || 'Corretora';
   const whatsappRenewalLink = getWhatsAppLink(
     client.phone, 
-    getRenewalWhatsAppMessage(client, brokerName)
+    getRenewalWhatsAppMessage(client, brokerName, brokerageName)
   );
   const whatsappBirthdayLink = getWhatsAppLink(
     client.phone, 
-    getBirthdayWhatsAppMessage(client, brokerName)
+    getBirthdayWhatsAppMessage(client, brokerName, brokerageName)
   );
   const whatsappDirectLink = getWhatsAppLink(
     client.phone, 
-    `Olá ${client.name}, tudo bem? Aqui é o ${brokerName}, seu corretor de seguros.`
+    `Olá, ${client.name.trim()}, tudo bem? Aqui é o ${brokerName}, da ${brokerageName}.`
   );
 
   return (
