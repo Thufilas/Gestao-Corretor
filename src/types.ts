@@ -78,4 +78,6 @@ export interface BirthdayItem {
   birthdayFormatted: string;
   ageUpcoming: number;
   isToday: boolean;
+  birthMonth?: number;
+  birthDay?: number;
 }

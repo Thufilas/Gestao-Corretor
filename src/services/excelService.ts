@@ -126,9 +126,9 @@ export function exportAlertsToExcel(alerts: ExpiryAlertItem[], filenamePrefix: s
 
   const rows = alerts.map(a => {
     let status = 'Normal';
-    if (a.alertLevel === 'red' || a.alertLevel === 'expired') status = 'Crítico (<=10 dias ou Vencida)';
-    else if (a.alertLevel === 'orange') status = 'Atenção (11 a 15 dias)';
-    else if (a.alertLevel === 'yellow') status = 'Alerta Prévio (16 a 30 dias)';
+    if (a.alertLevel === 'red' || a.alertLevel === 'expired' || a.daysRemaining <= 3) status = 'Crítico / Urgente (≤ 3 dias ou Vencida)';
+    else if (a.alertLevel === 'orange' || (a.daysRemaining >= 4 && a.daysRemaining <= 15)) status = 'Atenção (4 a 15 dias)';
+    else if (a.alertLevel === 'yellow' || (a.daysRemaining >= 16 && a.daysRemaining <= 30)) status = 'Monitoramento (16 a 30 dias)';
 
     return {
       'Status': status,
@@ -147,7 +147,7 @@ export function exportAlertsToExcel(alerts: ExpiryAlertItem[], filenamePrefix: s
 
   const worksheet = XLSX.utils.json_to_sheet(rows);
   worksheet['!cols'] = [
-    { wch: 28 }, // Status
+    { wch: 34 }, // Status
     { wch: 18 }, // Dias
     { wch: 30 }, // Nome
     { wch: 20 }, // Telefone
@@ -165,6 +165,42 @@ export function exportAlertsToExcel(alerts: ExpiryAlertItem[], filenamePrefix: s
 
   const todayStr = new Date().toISOString().split('T')[0];
   XLSX.writeFile(workbook, `${filenamePrefix}_${todayStr}.xlsx`);
+  return true;
+}
+
+/**
+ * Export renewal alerts to CSV spreadsheet
+ */
+export function exportAlertsToCsv(alerts: ExpiryAlertItem[], filenamePrefix: string = 'GestaoCorretor_Alertas_Renovacao'): boolean {
+  if (!alerts || alerts.length === 0) return false;
+
+  const rows = alerts.map(a => {
+    let status = 'Normal';
+    if (a.alertLevel === 'red' || a.alertLevel === 'expired' || a.daysRemaining <= 3) status = 'Crítico / Urgente (≤ 3 dias ou Vencida)';
+    else if (a.alertLevel === 'orange' || (a.daysRemaining >= 4 && a.daysRemaining <= 15)) status = 'Atenção (4 a 15 dias)';
+    else if (a.alertLevel === 'yellow' || (a.daysRemaining >= 16 && a.daysRemaining <= 30)) status = 'Monitoramento (16 a 30 dias)';
+
+    return {
+      'Status': status,
+      'Dias Restantes': a.daysRemaining < 0 ? `Vencida há ${Math.abs(a.daysRemaining)} dias` : `${a.daysRemaining} dias`,
+      'Nome do Cliente': a.client.name,
+      'Telefone / WhatsApp': a.client.phone,
+      'Nome da Seguradora': a.client.insuranceCompany,
+      'Fim da Vigência': formatDateBR(a.client.endDate),
+      'Tipo de Cliente': a.client.clientType,
+      'Veículo / Modelo': a.client.vehicleModel || '',
+      'Placa': a.client.licensePlate || '',
+      'Valor do Seguro (R$)': Number(a.client.totalInsuredValue || 0),
+      'Comissão Estimada (R$)': Number(a.client.commissionAmount || 0)
+    };
+  });
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Alertas');
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  XLSX.writeFile(workbook, `${filenamePrefix}_${todayStr}.csv`, { bookType: 'csv' });
   return true;
 }
 
@@ -202,6 +238,32 @@ export function exportBirthdaysToExcel(birthdays: BirthdayItem[], filenamePrefix
 
   const todayStr = new Date().toISOString().split('T')[0];
   XLSX.writeFile(workbook, `${filenamePrefix}_${todayStr}.xlsx`);
+  return true;
+}
+
+/**
+ * Export birthday list to CSV spreadsheet
+ */
+export function exportBirthdaysToCsv(birthdays: BirthdayItem[], filenamePrefix: string = 'GestaoCorretor_Aniversariantes'): boolean {
+  if (!birthdays || birthdays.length === 0) return false;
+
+  const rows = birthdays.map(b => ({
+    'Data de Aniversário': b.birthdayFormatted,
+    'Situação': b.isToday ? 'Aniversariante de Hoje!' : `Em ${b.daysUntilBirthday} dias`,
+    'Idade a Completar': b.ageUpcoming ? `${b.ageUpcoming} anos` : 'Não informada',
+    'Nome do Cliente': b.client.name,
+    'Telefone / WhatsApp': b.client.phone,
+    'Seguradora': b.client.insuranceCompany,
+    'Veículo / Modelo': b.client.vehicleModel || '',
+    'Placa': b.client.licensePlate || ''
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Aniversariantes');
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  XLSX.writeFile(workbook, `${filenamePrefix}_${todayStr}.csv`, { bookType: 'csv' });
   return true;
 }
 

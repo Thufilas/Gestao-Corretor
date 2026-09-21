@@ -113,14 +113,14 @@ export function getDaysRemaining(endDateStr: string): number {
 
 /**
  * Classify expiry alert level based on business rules:
- * - Vermelho: <= 10 dias (inclui vencidas)
- * - Laranja: 11 a 15 dias
- * - Amarelo: 16 a 30 dias
+ * - Crítico / Vermelho: <= 3 dias (inclui vencidas)
+ * - Atenção / Laranja: 4 a 15 dias
+ * - Monitoramento / Amarelo: 16 a 30 dias
  * - Normal: > 30 dias
  */
 export function getExpiryAlertLevel(daysRemaining: number): AlertLevel {
   if (daysRemaining < 0) return 'expired';
-  if (daysRemaining <= 10) return 'red';
+  if (daysRemaining <= 3) return 'red';
   if (daysRemaining <= 15) return 'orange';
   if (daysRemaining <= 30) return 'yellow';
   return 'normal';
@@ -152,9 +152,9 @@ export function getExpiryAlerts(clients: Client[]): ExpiryAlertItem[] {
 }
 
 /**
- * Calculate upcoming birthdays in current and upcoming months
+ * Calculate all birthdays across the portfolio with full date and month metadata
  */
-export function getUpcomingBirthdays(clients: Client[]): BirthdayItem[] {
+export function getAllClientBirthdays(clients: Client[]): BirthdayItem[] {
   const today = new Date();
   const currentYear = today.getFullYear();
   today.setHours(0, 0, 0, 0);
@@ -164,9 +164,12 @@ export function getUpcomingBirthdays(clients: Client[]): BirthdayItem[] {
   for (const client of clients) {
     if (!client.birthDate) continue;
 
-    const [, monthStr, dayStr] = client.birthDate.split('-');
-    const birthMonth = parseInt(monthStr, 10);
-    const birthDay = parseInt(dayStr, 10);
+    const parts = client.birthDate.split('-');
+    if (parts.length < 3) continue;
+
+    const birthYear = parseInt(parts[0], 10);
+    const birthMonth = parseInt(parts[1], 10);
+    const birthDay = parseInt(parts[2], 10);
 
     if (isNaN(birthMonth) || isNaN(birthDay)) continue;
 
@@ -174,30 +177,34 @@ export function getUpcomingBirthdays(clients: Client[]): BirthdayItem[] {
     let nextBday = new Date(currentYear, birthMonth - 1, birthDay);
     nextBday.setHours(0, 0, 0, 0);
 
-    // If already passed this year, look at next year
+    // If already passed this year, next celebration is next year
     if (nextBday < today) {
       nextBday = new Date(currentYear + 1, birthMonth - 1, birthDay);
     }
 
     const diffDays = Math.ceil((nextBday.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-    
-    // Only return birthdays within the next 45 days
-    if (diffDays <= 45) {
-      const birthYear = parseInt(client.birthDate.split('-')[0], 10);
-      const ageUpcoming = isNaN(birthYear) ? 0 : nextBday.getFullYear() - birthYear;
+    const ageUpcoming = isNaN(birthYear) ? 0 : nextBday.getFullYear() - birthYear;
 
-      items.push({
-        client,
-        daysUntilBirthday: diffDays,
-        birthdayFormatted: `${String(birthDay).padStart(2, '0')}/${String(birthMonth).padStart(2, '0')}`,
-        ageUpcoming,
-        isToday: diffDays === 0
-      });
-    }
+    items.push({
+      client,
+      daysUntilBirthday: diffDays,
+      birthdayFormatted: `${String(birthDay).padStart(2, '0')}/${String(birthMonth).padStart(2, '0')}`,
+      ageUpcoming,
+      isToday: diffDays === 0,
+      birthMonth,
+      birthDay
+    });
   }
 
   // Sort: closest birthdays first
   return items.sort((a, b) => a.daysUntilBirthday - b.daysUntilBirthday);
+}
+
+/**
+ * Calculate upcoming birthdays within maxDays (defaults to 45 days)
+ */
+export function getUpcomingBirthdays(clients: Client[], maxDays = 45): BirthdayItem[] {
+  return getAllClientBirthdays(clients).filter(b => b.daysUntilBirthday <= maxDays);
 }
 
 /**
@@ -239,12 +246,15 @@ Já estou preparando as melhores condições e opções de renovação com desco
 /**
  * Pre-composed WhatsApp text for birthday greetings
  */
-export function getBirthdayWhatsAppMessage(client: Client, brokerName: string): string {
-  return `Olá ${client.name}! 🎂🎉
+export function getBirthdayWhatsAppMessage(client: Client, brokerName: string, brokerageName?: string): string {
+  const firstName = client.name.trim().split(' ')[0];
+  const brandText = brokerageName ? ` e toda a equipe da ${brokerageName}` : '';
 
-Aqui é o ${brokerName}. Gostaria de lhe desejar um Feliz Aniversário! Muita saúde, paz, proteção e realizações na sua jornada.
+  return `Olá, ${firstName}! 🎂🎉
 
-Conte sempre conosco para cuidar da sua segurança e tranquilidade. Um grande abraço!`;
+Aqui é o ${brokerName}${brandText}. Gostaria de lhe desejar um Feliz Aniversário! Que este novo ciclo seja repleto de muita saúde, paz, proteção e grandes realizações.
+
+É uma alegria ter você conosco. Conte sempre com a gente para cuidar da sua segurança e tranquilidade. Parabéns pelo seu dia!`;
 }
 
 /**
