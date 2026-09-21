@@ -256,6 +256,7 @@ export default function App() {
             onEditClient={handleOpenEditClient}
             onDeleteClient={handleDeleteClient}
             onViewDocument={handleViewDocument}
+            onImportClients={handleImportClients}
             currentUser={currentUser}
           />
         )}

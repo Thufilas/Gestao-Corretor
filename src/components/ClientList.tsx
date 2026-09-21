@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { 
   Search, 
   Filter, 
@@ -6,6 +6,8 @@ import {
   FileSpreadsheet, 
   FileText, 
   Download, 
+  Upload,
+  ChevronDown,
   Trash2, 
   Edit3, 
   Eye, 
@@ -31,7 +33,7 @@ import {
   getRenewalWhatsAppMessage, 
   POPULAR_INSURERS 
 } from '../utils/insuranceUtils';
-import { exportClientsToExcel } from '../services/excelService';
+import { exportClientsToExcel, exportClientsToCsv, parseExcelOrCsvFile } from '../services/excelService';
 import { exportClientsToPdf } from '../services/pdfService';
 
 interface ClientListProps {
@@ -41,6 +43,7 @@ interface ClientListProps {
   onEditClient: (client: Client) => void;
   onDeleteClient: (clientId: string) => void;
   onViewDocument: (client: Client) => void;
+  onImportClients?: (clients: Client[], mode: 'append' | 'replace') => void;
   currentUser: User | null;
 }
 
@@ -51,6 +54,7 @@ export const ClientList: React.FC<ClientListProps> = ({
   onEditClient,
   onDeleteClient,
   onViewDocument,
+  onImportClients,
   currentUser
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -61,7 +65,9 @@ export const ClientList: React.FC<ClientListProps> = ({
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showImportMenu, setShowImportMenu] = useState(false);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const brokerName = currentUser?.name || 'Corretor';
 
   const showToast = (msg: string) => {
@@ -69,6 +75,39 @@ export const ClientList: React.FC<ClientListProps> = ({
     setTimeout(() => {
       setToastMessage((prev) => (prev === msg ? null : prev));
     }, 4000);
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const result = await parseExcelOrCsvFile(file);
+      if (result.clients.length > 0) {
+        if (onImportClients) {
+          onImportClients(result.clients, 'append');
+        }
+        showToast(`Sucesso! ${result.clients.length} cliente(s) importado(s) com sucesso.`);
+      } else {
+        showToast('Nenhum cliente válido encontrado no arquivo.');
+      }
+    } catch (err: any) {
+      showToast('Erro ao importar arquivo: ' + (err.message || 'Formato inválido.'));
+    } finally {
+      if (e.target) e.target.value = '';
+    }
+  };
+
+  const triggerFileInput = (acceptType?: string) => {
+    setShowImportMenu(false);
+    if (fileInputRef.current) {
+      if (acceptType) {
+        fileInputRef.current.accept = acceptType;
+      } else {
+        fileInputRef.current.accept = '.xlsx,.xls,.csv';
+      }
+      fileInputRef.current.click();
+    }
   };
 
   // Filter and sort clients
@@ -100,11 +139,10 @@ export const ClientList: React.FC<ClientListProps> = ({
       // Alert status filter
       if (selectedAlertStatus !== 'all') {
         const days = getDaysRemaining(c.endDate);
-        const level = getExpiryAlertLevel(days);
-        if (selectedAlertStatus === 'red' && level !== 'red' && level !== 'expired') return false;
-        if (selectedAlertStatus === 'orange' && level !== 'orange') return false;
-        if (selectedAlertStatus === 'yellow' && level !== 'yellow') return false;
-        if (selectedAlertStatus === 'normal' && level !== 'normal') return false;
+        if (selectedAlertStatus === 'red' && days > 3) return false;
+        if (selectedAlertStatus === 'orange' && (days < 4 || days > 15)) return false;
+        if (selectedAlertStatus === 'yellow' && (days < 16 || days > 30)) return false;
+        if (selectedAlertStatus === 'normal' && days <= 30) return false;
       }
 
       return true;
@@ -144,14 +182,14 @@ export const ClientList: React.FC<ClientListProps> = ({
     setShowExportMenu(false);
   };
 
-  const handleExportAllExcel = () => {
-    if (clients.length === 0) {
-      showToast('Sua carteira está vazia. Cadastre ou importe clientes antes de exportar.');
+  const handleExportFilteredCsv = () => {
+    if (filteredClients.length === 0) {
+      showToast('Nenhum cliente disponível para exportar com os filtros atuais.');
       return;
     }
-    const success = exportClientsToExcel(clients, 'GestaoCorretor_CarteiraCompleta');
+    const success = exportClientsToCsv(filteredClients, 'GestaoCorretor_Clientes');
     if (success) {
-      showToast(`Planilha Excel com toda a carteira exportada com sucesso! (${clients.length} cliente(s))`);
+      showToast(`Arquivo CSV exportado com sucesso! (${filteredClients.length} cliente(s))`);
     }
     setShowExportMenu(false);
   };
@@ -163,12 +201,19 @@ export const ClientList: React.FC<ClientListProps> = ({
     }
     exportClientsToPdf(filteredClients, currentUser, 'Relatório da Carteira de Clientes');
     showToast(`Relatório PDF gerado com sucesso! (${filteredClients.length} cliente(s))`);
+    setShowExportMenu(false);
   };
-
-  const hasFiltersApplied = filteredClients.length !== clients.length;
 
   return (
     <div className="space-y-5 pb-12">
+      {/* Hidden File Input for CSV / Excel Import */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        className="hidden"
+        onChange={handleFileUpload}
+      />
+
       {/* Toast Feedback Notification */}
       {toastMessage && (
         <div className="p-3.5 rounded-2xl bg-emerald-600 text-white text-xs font-semibold flex items-center justify-between shadow-lg shadow-emerald-600/20 animate-in fade-in slide-in-from-top-2 duration-200">
@@ -189,7 +234,7 @@ export const ClientList: React.FC<ClientListProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white">
-            Carteira de Clientes & Apólices
+            Carteira de Clientes
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400">
             Total de {clients.length} segurados cadastrados • {filteredClients.length} exibidos
@@ -197,72 +242,87 @@ export const ClientList: React.FC<ClientListProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Quick Export actions with Excel & PDF */}
+          {/* Dropdown Importar */}
           <div className="relative">
-            <div className="flex items-center rounded-xl bg-white dark:bg-slate-800 border border-emerald-300 dark:border-emerald-800/80 shadow-xs overflow-hidden">
-              <button
-                onClick={handleExportFilteredExcel}
-                className="flex items-center gap-1.5 px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-bold transition-colors cursor-pointer"
-                title={hasFiltersApplied ? `Exportar ${filteredClients.length} clientes filtrados para Excel` : 'Exportar carteira para Excel'}
-              >
-                <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                <span>Exportar Excel</span>
-                {hasFiltersApplied && (
-                  <span className="ml-1 px-1.5 py-0.2 rounded-full bg-emerald-100 dark:bg-emerald-900 text-[10px] text-emerald-800 dark:text-emerald-200">
-                    {filteredClients.length}
-                  </span>
-                )}
-              </button>
+            <button
+              onClick={() => {
+                setShowImportMenu(!showImportMenu);
+                setShowExportMenu(false);
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              title="Importar lista de clientes (CSV ou Excel)"
+            >
+              <Upload className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+              <span>Importar</span>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+            </button>
 
-              {hasFiltersApplied && (
+            {showImportMenu && (
+              <div className="absolute right-0 mt-1.5 w-52 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl z-30 p-1.5 text-xs animate-in fade-in zoom-in-95">
                 <button
-                  onClick={() => setShowExportMenu(!showExportMenu)}
-                  className="px-2 py-2 border-l border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs cursor-pointer"
-                  title="Mais opções de exportação"
+                  onClick={() => triggerFileInput('.csv')}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium flex items-center gap-2 cursor-pointer"
                 >
-                  <ArrowUpDown className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-
-            {/* Submenu when filters are active */}
-            {showExportMenu && hasFiltersApplied && (
-              <div className="absolute right-0 mt-1 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-30 p-1.5 text-xs animate-in fade-in zoom-in-95">
-                <button
-                  onClick={handleExportFilteredExcel}
-                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-emerald-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium flex items-center justify-between cursor-pointer"
-                >
-                  <span>Apenas Filtrados</span>
-                  <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
-                    {filteredClients.length} clientes
-                  </span>
+                  <Upload className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                  <span>Importar via CSV</span>
                 </button>
                 <button
-                  onClick={handleExportAllExcel}
-                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-emerald-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium flex items-center justify-between cursor-pointer"
+                  onClick={() => triggerFileInput('.xlsx,.xls')}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium flex items-center gap-2 cursor-pointer"
                 >
-                  <span>Toda a Carteira</span>
-                  <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
-                    {clients.length} clientes
-                  </span>
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>Importar via Excel (.xlsx)</span>
                 </button>
               </div>
             )}
           </div>
 
-          <button
-            onClick={handleExportFilteredPdf}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer shadow-xs"
-            title="Exportar relatório em PDF"
-          >
-            <FileText className="w-4 h-4 text-cyan-600" />
-            <span className="hidden sm:inline">Exportar PDF</span>
-          </button>
+          {/* Dropdown Exportar */}
+          <div className="relative">
+            <button
+              onClick={() => {
+                setShowExportMenu(!showExportMenu);
+                setShowImportMenu(false);
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              title="Exportar dados da carteira"
+            >
+              <Download className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <span>Exportar</span>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+            </button>
 
-          {/* New Client Button */}
+            {showExportMenu && (
+              <div className="absolute right-0 mt-1.5 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl z-30 p-1.5 text-xs animate-in fade-in zoom-in-95">
+                <button
+                  onClick={handleExportFilteredPdf}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium flex items-center gap-2 cursor-pointer"
+                >
+                  <FileText className="w-4 h-4 text-rose-500" />
+                  <span>Exportar como PDF</span>
+                </button>
+                <button
+                  onClick={handleExportFilteredExcel}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium flex items-center gap-2 cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>Exportar como Excel (.xlsx)</span>
+                </button>
+                <button
+                  onClick={handleExportFilteredCsv}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium flex items-center gap-2 cursor-pointer"
+                >
+                  <FileText className="w-4 h-4 text-blue-500" />
+                  <span>Exportar como CSV</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* New Client Primary Button */}
           <button
             onClick={onOpenNewClient}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-700 active:scale-95 text-white text-xs font-bold shadow-md shadow-cyan-600/25 transition-all cursor-pointer"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white text-xs font-bold shadow-md shadow-cyan-600/25 transition-all cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>Cadastrar Cliente</span>
@@ -487,23 +547,23 @@ export const ClientList: React.FC<ClientListProps> = ({
                             {formatDateBR(client.endDate)}
                           </span>
 
-                          {alertLevel === 'red' || alertLevel === 'expired' ? (
-                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300">
-                              <AlertTriangle className="w-2.5 h-2.5" />
-                              {daysRemaining <= 0 ? 'Vencido' : `${daysRemaining} dias`}
+                          {daysRemaining <= 3 ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300/80 dark:border-rose-800">
+                              <AlertTriangle className="w-2.5 h-2.5 text-rose-600 dark:text-rose-400" />
+                              {daysRemaining <= 0 ? 'Vencido' : `${daysRemaining}d`}
                             </span>
-                          ) : alertLevel === 'orange' ? (
-                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                              <Clock className="w-2.5 h-2.5" />
-                              {daysRemaining} dias
+                          ) : daysRemaining <= 15 ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300/80 dark:border-amber-800">
+                              <Clock className="w-2.5 h-2.5 text-amber-600 dark:text-amber-400" />
+                              {daysRemaining}d
                             </span>
-                          ) : alertLevel === 'yellow' ? (
-                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-semibold bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-300">
-                              {daysRemaining} dias
+                          ) : daysRemaining <= 30 ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-300 border border-yellow-300/80 dark:border-yellow-800">
+                              {daysRemaining}d
                             </span>
                           ) : (
-                            <span className="text-[10px] text-slate-400">
-                              Em {daysRemaining} dias
+                            <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                              Em {daysRemaining}d
                             </span>
                           )}
                         </div>
@@ -540,10 +600,10 @@ export const ClientList: React.FC<ClientListProps> = ({
                         {client.document ? (
                           <button
                             onClick={() => onViewDocument(client)}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-50 dark:bg-rose-950/50 hover:bg-rose-100 text-rose-700 dark:text-rose-300 font-semibold text-[10px] border border-rose-200 dark:border-rose-800 transition-colors cursor-pointer"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-[11px] border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer shadow-2xs"
                             title={`Visualizar apólice: ${client.document.name}`}
                           >
-                            <FileText className="w-3 h-3" />
+                            <FileText className="w-3.5 h-3.5 text-rose-500 shrink-0" />
                             <span>PDF</span>
                           </button>
                         ) : (

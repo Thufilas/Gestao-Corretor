@@ -86,6 +86,39 @@ export function exportClientsToExcel(clients: Client[], filenamePrefix: string =
 }
 
 /**
+ * Export client portfolio to CSV spreadsheet format
+ */
+export function exportClientsToCsv(clients: Client[], filenamePrefix: string = 'GestaoCorretor_Clientes'): boolean {
+  if (!clients || clients.length === 0) {
+    return false;
+  }
+
+  const rows = clients.map((c) => ({
+    'Nome do Cliente': c.name,
+    'Data de Aniversário': formatDateBR(c.birthDate),
+    'Nome da Seguradora': c.insuranceCompany,
+    'Início da Vigência': formatDateBR(c.startDate),
+    'Fim da Vigência': formatDateBR(c.endDate),
+    'Telefone / WhatsApp': c.phone,
+    'Veículo / Modelo': c.vehicleModel || '',
+    'Placa': c.licensePlate || '',
+    'Valor Total do Seguro (R$)': Number(c.totalInsuredValue || 0),
+    '% Comissão': Number(c.commissionRate || 0),
+    'Comissão Ganha (R$)': Number(c.commissionAmount || 0),
+    'Tipo de Cliente': c.clientType,
+    'Observações': c.notes || ''
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Clientes');
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  XLSX.writeFile(workbook, `${filenamePrefix}_${todayStr}.csv`, { bookType: 'csv' });
+  return true;
+}
+
+/**
  * Export renewal alerts to .xlsx spreadsheet
  */
 export function exportAlertsToExcel(alerts: ExpiryAlertItem[], filenamePrefix: string = 'GestaoCorretor_Alertas_Renovacao'): boolean {
