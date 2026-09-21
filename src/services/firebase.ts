@@ -6,9 +6,19 @@ import {
   signOut, 
   onAuthStateChanged, 
   updateProfile,
+  updateEmail,
+  updatePassword,
+  sendPasswordResetEmail,
   Auth,
   User as FirebaseUser
 } from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  getDoc, 
+  setDoc, 
+  Firestore 
+} from 'firebase/firestore';
 import { 
   getStorage, 
   ref, 
@@ -19,6 +29,8 @@ import {
   FirebaseStorage 
 } from 'firebase/storage';
 import { User } from '../types';
+import { loadUserProfile, saveUserProfile } from './storage';
+import { isUserAdmin } from '../utils/insuranceUtils';
 
 const STORAGE_KEY_CUSTOM_FIREBASE_CONFIG = 'gestao_corretor_firebase_config_v1';
 
@@ -163,6 +175,48 @@ export function getFirebaseStorageInstance(customBucket?: string): FirebaseStora
   }
 }
 
+export function getFirebaseFirestore(): Firestore | null {
+  const app = getFirebaseApp();
+  if (!app) return null;
+  try {
+    return getFirestore(app);
+  } catch (err) {
+    console.warn('Failed to get Firebase Firestore:', err);
+    return null;
+  }
+}
+
+export async function fetchUserProfileFromFirestore(userId: string): Promise<Partial<User> | null> {
+  const db = getFirebaseFirestore();
+  if (!db || !userId) return null;
+  try {
+    const userDocRef = doc(db, 'users', userId);
+    const snap = await getDoc(userDocRef);
+    if (snap.exists()) {
+      return snap.data() as Partial<User>;
+    }
+  } catch (err) {
+    console.warn('Could not read user profile from Firestore:', err);
+  }
+  return null;
+}
+
+export async function saveUserProfileToFirestore(userId: string, data: Partial<User>): Promise<void> {
+  const db = getFirebaseFirestore();
+  if (!db || !userId) return;
+  try {
+    const userDocRef = doc(db, 'users', userId);
+    const payload = {
+      ...data,
+      id: userId,
+      updatedAt: new Date().toISOString()
+    };
+    await setDoc(userDocRef, payload, { merge: true });
+  } catch (err) {
+    console.warn('Could not write user profile to Firestore:', err);
+  }
+}
+
 // Diagnostic helper translating Firebase Storage errors to actionable Portuguese guidance
 export function parseFirebaseStorageError(err: unknown, currentBucket = ''): FirebaseStorageDiagnosticDetail {
   const auth = getFirebaseAuth();
@@ -271,7 +325,9 @@ export async function firebaseSignUp(
   password: string, 
   name: string, 
   brokerageName: string, 
-  susep?: string
+  susep?: string,
+  firstName?: string,
+  lastName?: string
 ): Promise<User> {
   const auth = getFirebaseAuth();
   if (!auth) {
@@ -279,40 +335,106 @@ export async function firebaseSignUp(
   }
 
   const credential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+  const fullName = name.trim() || [firstName, lastName].filter(Boolean).join(' ') || 'Corretor de Seguros';
   
-  if (name && credential.user) {
-    await updateProfile(credential.user, {
-      displayName: name.trim()
-    });
+  if (fullName && credential.user) {
+    try {
+      await updateProfile(credential.user, {
+        displayName: fullName
+      });
+    } catch (e) {
+      console.warn('Could not update Firebase Auth displayName:', e);
+    }
   }
+
+  const derivedFirstName = firstName?.trim() || fullName.split(/\s+/)[0] || 'Corretor';
+  const derivedLastName = lastName?.trim() || fullName.split(/\s+/).slice(1).join(' ') || '';
 
   const appUser: User = {
     id: credential.user.uid,
-    name: name.trim() || credential.user.email || 'Corretor',
+    name: fullName,
+    firstName: derivedFirstName,
+    lastName: derivedLastName,
     email: credential.user.email || email,
     brokerageName: brokerageName.trim() || 'Minha Corretora de Seguros',
     susep: susep?.trim() || ''
   };
 
+  // 1. Save locally per-user
+  saveUserProfile(appUser);
+
+  // 2. Persist to Firestore
+  await saveUserProfileToFirestore(appUser.id, appUser);
+
   return appUser;
 }
 
 export async function firebaseSignIn(email: string, password: string): Promise<User> {
+  const startTime = performance.now();
   const auth = getFirebaseAuth();
   if (!auth) {
     throw new Error('Firebase Auth não está configurado. Verifique as credenciais do Firebase.');
   }
 
+  // 1. Authenticate with Firebase Auth
   const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
   const fbUser = credential.user;
+  const authTime = performance.now() - startTime;
+  console.info(`[Auth Performance] signInWithEmailAndPassword concluído em ${Math.round(authTime)}ms`);
+
+  // 2. Fast-Path: build essential user profile immediately from local cache and auth metadata
+  const localDoc = loadUserProfile(fbUser.uid);
+  const fullName = localDoc?.name || fbUser.displayName || fbUser.email?.split('@')[0] || 'Corretor';
+  const nameParts = fullName.trim().split(/\s+/);
+  const firstName = localDoc?.firstName || nameParts[0] || 'Corretor';
+  const lastName = localDoc?.lastName !== undefined ? localDoc.lastName : (nameParts.slice(1).join(' ') || '');
+  const brokerageName = localDoc?.brokerageName || 'Corretora de Seguros';
+  const susep = localDoc?.susep || '';
+
+  const adminFlag = isUserAdmin({
+    id: fbUser.uid,
+    isAdmin: localDoc?.isAdmin,
+    email: fbUser.email || email
+  });
 
   const appUser: User = {
     id: fbUser.uid,
-    name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Corretor',
+    name: fullName,
+    firstName,
+    lastName,
     email: fbUser.email || email,
-    brokerageName: 'Corretora de Seguros',
-    susep: ''
+    brokerageName,
+    susep,
+    isAdmin: adminFlag
   };
+
+  // Persist combined profile immediately
+  saveUserProfile(appUser);
+  console.info(`[Auth Performance] Sessão do utilizador autorizada em ${Math.round(performance.now() - startTime)}ms (Fast-Path)`);
+
+  // 3. Deferred / Background Sync: Fetch remote Firestore profile without blocking login transition
+  fetchUserProfileFromFirestore(fbUser.uid)
+    .then((remoteDoc) => {
+      if (remoteDoc) {
+        const updatedUser: User = {
+          ...appUser,
+          name: remoteDoc.name || appUser.name,
+          firstName: remoteDoc.firstName || appUser.firstName,
+          lastName: remoteDoc.lastName !== undefined ? remoteDoc.lastName : appUser.lastName,
+          brokerageName: remoteDoc.brokerageName || appUser.brokerageName,
+          susep: remoteDoc.susep !== undefined ? remoteDoc.susep : appUser.susep,
+          isAdmin: isUserAdmin({
+            id: fbUser.uid,
+            isAdmin: remoteDoc.isAdmin !== undefined ? remoteDoc.isAdmin : appUser.isAdmin,
+            email: fbUser.email || email
+          })
+        };
+        saveUserProfile(updatedUser);
+      }
+    })
+    .catch((e) => {
+      console.warn('Background Firestore profile sync warning:', e);
+    });
 
   return appUser;
 }
@@ -324,6 +446,86 @@ export async function firebaseSignOut(): Promise<void> {
   }
 }
 
+export async function firebaseUpdateUserProfile(updated: Partial<User>): Promise<void> {
+  const auth = getFirebaseAuth();
+  const currentUser = auth?.currentUser;
+  const userId = updated.id || currentUser?.uid;
+
+  const fullName = updated.name?.trim() || [updated.firstName, updated.lastName].filter(Boolean).join(' ');
+
+  // 1. Update Firebase Auth (displayName, email)
+  if (currentUser) {
+    if (fullName && fullName !== currentUser.displayName) {
+      try {
+        await updateProfile(currentUser, { displayName: fullName });
+      } catch (err) {
+        console.warn('Firebase updateProfile displayName warning:', err);
+      }
+    }
+
+    if (updated.email && updated.email.trim() && updated.email.trim() !== currentUser.email) {
+      try {
+        await updateEmail(currentUser, updated.email.trim());
+      } catch (err: unknown) {
+        console.warn('Firebase updateEmail warning (may require recent-login):', err);
+        throw err;
+      }
+    }
+  }
+
+  // 2. Persist to Firestore & Local Storage
+  if (userId) {
+    const currentLocal = loadUserProfile(userId);
+    const completeUser: User = {
+      id: userId,
+      name: fullName || currentLocal?.name || currentUser?.displayName || 'Corretor',
+      firstName: updated.firstName !== undefined ? updated.firstName : (currentLocal?.firstName || (fullName ? fullName.split(/\s+/)[0] : 'Corretor')),
+      lastName: updated.lastName !== undefined ? updated.lastName : (currentLocal?.lastName || (fullName ? fullName.split(/\s+/).slice(1).join(' ') : '')),
+      email: updated.email || currentLocal?.email || currentUser?.email || '',
+      brokerageName: updated.brokerageName !== undefined ? updated.brokerageName : (currentLocal?.brokerageName || 'Corretora de Seguros'),
+      susep: updated.susep !== undefined ? updated.susep : (currentLocal?.susep || ''),
+      isAdmin: updated.isAdmin !== undefined ? updated.isAdmin : currentLocal?.isAdmin
+    };
+
+    // Save locally
+    saveUserProfile(completeUser);
+
+    // Save to Firestore
+    await saveUserProfileToFirestore(userId, completeUser);
+  }
+}
+
+export async function firebaseUpdateUserPassword(newPassword: string): Promise<void> {
+  const auth = getFirebaseAuth();
+  if (!auth?.currentUser) {
+    throw new Error('Nenhum usuário logado no Firebase.');
+  }
+
+  if (!newPassword || newPassword.length < 6) {
+    throw new Error('A nova senha deve ter no mínimo 6 caracteres.');
+  }
+
+  try {
+    await updatePassword(auth.currentUser, newPassword);
+  } catch (err: unknown) {
+    console.error('Firebase updatePassword error:', err);
+    throw err;
+  }
+}
+
+export async function firebaseSendPasswordReset(email: string): Promise<void> {
+  const auth = getFirebaseAuth();
+  if (!auth) {
+    throw new Error('Firebase Auth não inicializado.');
+  }
+  if (!email || !email.trim()) {
+    throw new Error('Informe o e-mail para envio de redefinição de senha.');
+  }
+  await sendPasswordResetEmail(auth, email.trim());
+}
+
+let activeAuthSubscriberUid: string | null = null;
+
 export function subscribeToAuthChanges(callback: (user: User | null) => void): () => void {
   const auth = getFirebaseAuth();
   if (!auth) {
@@ -332,14 +534,67 @@ export function subscribeToAuthChanges(callback: (user: User | null) => void): (
 
   return onAuthStateChanged(auth, (fbUser: FirebaseUser | null) => {
     if (fbUser) {
-      callback({
+      // Avoid duplicate trigger if UID hasn't changed
+      if (activeAuthSubscriberUid === fbUser.uid) {
+        return;
+      }
+      activeAuthSubscriberUid = fbUser.uid;
+
+      // Fast-path: immediate emit from local cache
+      const localDoc = loadUserProfile(fbUser.uid);
+      const fullName = localDoc?.name || fbUser.displayName || fbUser.email?.split('@')[0] || 'Corretor';
+      const nameParts = fullName.trim().split(/\s+/);
+      const firstName = localDoc?.firstName || nameParts[0] || 'Corretor';
+      const lastName = localDoc?.lastName !== undefined ? localDoc.lastName : (nameParts.slice(1).join(' ') || '');
+      const brokerageName = localDoc?.brokerageName || 'Corretora de Seguros';
+      const susep = localDoc?.susep || '';
+
+      const adminFlag = isUserAdmin({
         id: fbUser.uid,
-        name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Corretor',
-        email: fbUser.email || '',
-        brokerageName: 'Corretora de Seguros',
-        susep: ''
+        isAdmin: localDoc?.isAdmin,
+        email: fbUser.email || localDoc?.email || ''
       });
+
+      const appUser: User = {
+        id: fbUser.uid,
+        name: fullName,
+        firstName,
+        lastName,
+        email: fbUser.email || localDoc?.email || '',
+        brokerageName,
+        susep,
+        isAdmin: adminFlag
+      };
+
+      saveUserProfile(appUser);
+      callback(appUser);
+
+      // Background deferred sync
+      fetchUserProfileFromFirestore(fbUser.uid)
+        .then((remoteDoc) => {
+          if (remoteDoc) {
+            const updatedUser: User = {
+              ...appUser,
+              name: remoteDoc.name || appUser.name,
+              firstName: remoteDoc.firstName || appUser.firstName,
+              lastName: remoteDoc.lastName !== undefined ? remoteDoc.lastName : appUser.lastName,
+              brokerageName: remoteDoc.brokerageName || appUser.brokerageName,
+              susep: remoteDoc.susep !== undefined ? remoteDoc.susep : appUser.susep,
+              isAdmin: isUserAdmin({
+                id: fbUser.uid,
+                isAdmin: remoteDoc.isAdmin !== undefined ? remoteDoc.isAdmin : appUser.isAdmin,
+                email: fbUser.email || localDoc?.email || ''
+              })
+            };
+            saveUserProfile(updatedUser);
+            callback(updatedUser);
+          }
+        })
+        .catch((e) => {
+          console.warn('Deferred remote user sync error in subscriber:', e);
+        });
     } else {
+      activeAuthSubscriberUid = null;
       callback(null);
     }
   });

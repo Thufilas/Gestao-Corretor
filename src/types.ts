@@ -36,9 +36,23 @@ export interface Client {
 export interface User {
   id: string;
   name: string;
+  firstName?: string;
+  lastName?: string;
   email: string;
   susep?: string; // Registro SUSEP do Corretor
   brokerageName: string;
+  isAdmin?: boolean;
+  status?: 'active' | 'inactive';
+  createdAt?: string;
+  clientCount?: number;
+  totalPremiums?: number;
+}
+
+export interface BrokerAccount extends User {
+  status: 'active' | 'inactive';
+  clientCount: number;
+  totalPremiums: number;
+  createdAt: string;
 }
 
 export interface DashboardStats {

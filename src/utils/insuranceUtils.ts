@@ -18,6 +18,42 @@ export const POPULAR_INSURERS = [
 ];
 
 /**
+ * Super Admin Master User ID
+ */
+export const ADMIN_USER_ID = 'bn5feEaSfUUClzVtFD5Q79Cx5112';
+
+/**
+ * Check if the user is the system administrator
+ */
+export function isUserAdmin(user?: { id?: string; isAdmin?: boolean; email?: string } | null): boolean {
+  if (!user) return false;
+  if (user.id === ADMIN_USER_ID) return true;
+  if (user.isAdmin === true) return true;
+  // Fallback for case-insensitive admin email or specific admin id
+  if (user.email && user.email.toLowerCase() === 'admin@gestaocorretor.com.br') return true;
+  return false;
+}
+
+/**
+ * Returns the first name of a user from firstName attribute or name string
+ */
+export function getUserFirstName(user?: { name?: string; firstName?: string; email?: string } | null): string {
+  if (!user) return 'Corretor';
+  if (user.firstName && user.firstName.trim()) {
+    return user.firstName.trim();
+  }
+  if (user.name && user.name.trim()) {
+    const parts = user.name.trim().split(/\s+/);
+    return parts[0] || 'Corretor';
+  }
+  if (user.email) {
+    const prefix = user.email.split('@')[0];
+    return prefix || 'Corretor';
+  }
+  return 'Corretor';
+}
+
+/**
  * Format currency to Brazilian Real (R$)
  */
 export function formatCurrency(value: number): string {
@@ -212,6 +248,11 @@ Conte sempre conosco para cuidar da sua segurança e tranquilidade. Um grande ab
 }
 
 /**
+ * Message standard for birth date validation errors
+ */
+export const BIRTH_DATE_ERROR_MESSAGE = 'A data de nascimento deve corresponder a uma idade entre 16 e 130 anos e não pode ser uma data futura.';
+
+/**
  * Returns today's date formatted as YYYY-MM-DD in local time
  */
 export function getTodayDateString(): string {
@@ -223,42 +264,167 @@ export function getTodayDateString(): string {
 }
 
 /**
- * Returns the minimum allowed birth date (default 130 years ago from today)
+ * Returns the maximum allowed birth date (exact 16 years ago from today)
  */
-export function getMinBirthDateString(yearsAgo = 130): string {
+export function getMaxBirthDateString(minAge = 16): string {
   const d = new Date();
-  const year = d.getFullYear() - yearsAgo;
+  const year = d.getFullYear() - minAge;
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
 
 /**
- * Validates birth date ensuring it is not in the future and not older than 130 years
+ * Returns the minimum allowed birth date (exact 130 years ago from today)
  */
-export function validateBirthDate(dateStr: string): { isValid: boolean; error?: string } {
+export function getMinBirthDateString(maxAge = 130): string {
+  const d = new Date();
+  const year = d.getFullYear() - maxAge;
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Calculates exact age in years considering day, month, and year of birth relative to current/reference date
+ */
+export function calculateExactAge(birthDateStr: string, referenceDate: Date = new Date()): number | null {
+  if (!birthDateStr || !birthDateStr.trim()) return null;
+
+  let year: number;
+  let month: number;
+  let day: number;
+
+  const trimmed = birthDateStr.trim();
+  if (trimmed.includes('-')) {
+    const parts = trimmed.split('-').map(Number);
+    if (parts.length !== 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) return null;
+    year = parts[0];
+    month = parts[1];
+    day = parts[2];
+  } else if (trimmed.includes('/')) {
+    const parts = trimmed.split('/').map(Number);
+    if (parts.length !== 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) return null;
+    day = parts[0];
+    month = parts[1];
+    year = parts[2];
+    if (year < 100) year += 2000;
+  } else {
+    return null;
+  }
+
+  // Calendar validity check
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const parsedDate = new Date(year, month - 1, day);
+  if (
+    parsedDate.getFullYear() !== year ||
+    parsedDate.getMonth() !== month - 1 ||
+    parsedDate.getDate() !== day
+  ) {
+    return null;
+  }
+
+  const refYear = referenceDate.getFullYear();
+  const refMonth = referenceDate.getMonth() + 1;
+  const refDay = referenceDate.getDate();
+
+  let age = refYear - year;
+  if (refMonth < month || (refMonth === month && refDay < day)) {
+    age--;
+  }
+
+  return age;
+}
+
+/**
+ * Strict validation of client birth date with exact age calculation
+ * Rules:
+ * 1. Future date: cannot be greater than today
+ * 2. Minimum age: at least 16 full years completed today
+ * 3. Maximum age: cannot be older than 130 years
+ */
+export function validateBirthDate(
+  dateStr: string,
+  referenceDate: Date = new Date()
+): { isValid: boolean; error?: string; age?: number } {
   if (!dateStr || !dateStr.trim()) {
-    return { isValid: false, error: 'A data de aniversário é obrigatória.' };
-  }
-
-  const todayStr = getTodayDateString();
-  const minDateStr = getMinBirthDateString(130);
-
-  if (dateStr > todayStr) {
-    return {
-      isValid: false,
-      error: 'A data de aniversário não pode ser uma data futura da atual.'
+    return { 
+      isValid: false, 
+      error: 'A data de aniversário é obrigatória.' 
     };
   }
 
-  if (dateStr < minDateStr) {
+  const ref = new Date(referenceDate);
+  ref.setHours(0, 0, 0, 0);
+
+  let year: number, month: number, day: number;
+  const trimmed = dateStr.trim();
+  if (trimmed.includes('-')) {
+    const parts = trimmed.split('-').map(Number);
+    if (parts.length !== 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) {
+      return { isValid: false, error: BIRTH_DATE_ERROR_MESSAGE };
+    }
+    year = parts[0];
+    month = parts[1];
+    day = parts[2];
+  } else if (trimmed.includes('/')) {
+    const parts = trimmed.split('/').map(Number);
+    if (parts.length !== 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) {
+      return { isValid: false, error: BIRTH_DATE_ERROR_MESSAGE };
+    }
+    day = parts[0];
+    month = parts[1];
+    year = parts[2];
+    if (year < 100) year += 2000;
+  } else {
+    return { isValid: false, error: BIRTH_DATE_ERROR_MESSAGE };
+  }
+
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return { isValid: false, error: BIRTH_DATE_ERROR_MESSAGE };
+  }
+
+  const birthDate = new Date(year, month - 1, day);
+  birthDate.setHours(0, 0, 0, 0);
+
+  if (
+    birthDate.getFullYear() !== year ||
+    birthDate.getMonth() !== month - 1 ||
+    birthDate.getDate() !== day
+  ) {
+    return { isValid: false, error: BIRTH_DATE_ERROR_MESSAGE };
+  }
+
+  // 1. Data Futura: cannot be after today
+  if (birthDate.getTime() > ref.getTime()) {
     return {
       isValid: false,
-      error: 'A data de aniversário não pode ser uma data anterior a 130 anos.'
+      error: BIRTH_DATE_ERROR_MESSAGE
     };
   }
 
-  return { isValid: true };
+  // 2. Precise Age Calculation
+  const age = calculateExactAge(dateStr, ref);
+  if (age === null) {
+    return {
+      isValid: false,
+      error: BIRTH_DATE_ERROR_MESSAGE
+    };
+  }
+
+  // 3. Minimum Age (16) & Maximum Age (130)
+  if (age < 16 || age > 130) {
+    return {
+      isValid: false,
+      error: BIRTH_DATE_ERROR_MESSAGE,
+      age
+    };
+  }
+
+  return { 
+    isValid: true, 
+    age 
+  };
 }
 
 /**

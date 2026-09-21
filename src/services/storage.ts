@@ -239,9 +239,12 @@ export const DEMO_USER_ID = 'usr-01';
 export const DEFAULT_USER: User = {
   id: DEMO_USER_ID,
   name: 'Carlos Eduardo Silva',
+  firstName: 'Carlos',
+  lastName: 'Eduardo Silva',
   email: 'corretor@gestaocorretor.com.br',
   susep: '10.203948/2024',
-  brokerageName: 'Silva Corretora de Seguros'
+  brokerageName: 'Silva Corretora de Seguros',
+  isAdmin: false
 };
 
 export function getClientsStorageKey(userId?: string | null): string {
@@ -309,11 +312,67 @@ export function clearUserClients(userId?: string | null): void {
   }
 }
 
+export function getUserProfileKey(userId: string): string {
+  return `gestao_corretor_user_profile_${userId}`;
+}
+
+export function loadUserProfile(userId?: string | null): User | null {
+  if (!userId) return null;
+  try {
+    const raw = localStorage.getItem(getUserProfileKey(userId));
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch (e) {
+    console.error('Failed to load user profile from storage:', e);
+  }
+  return null;
+}
+
+export function saveUserProfile(user: User): void {
+  if (!user || !user.id) return;
+  try {
+    const key = getUserProfileKey(user.id);
+    localStorage.setItem(key, JSON.stringify(user));
+
+    // Also update broker list if stored
+    try {
+      const brokersRaw = localStorage.getItem('gestao_corretor_registered_brokers_v1');
+      if (brokersRaw) {
+        const brokers = JSON.parse(brokersRaw);
+        const index = brokers.findIndex((b: { id: string }) => b.id === user.id);
+        if (index !== -1) {
+          brokers[index] = {
+            ...brokers[index],
+            name: user.name,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+            brokerageName: user.brokerageName,
+            susep: user.susep
+          };
+          localStorage.setItem('gestao_corretor_registered_brokers_v1', JSON.stringify(brokers));
+        }
+      }
+    } catch {
+      // Ignore broker update errors
+    }
+  } catch (e) {
+    console.error('Failed to save user profile to storage:', e);
+  }
+}
+
 export function loadCurrentUser(): User | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_USER);
     if (!raw) return null;
-    return JSON.parse(raw);
+    const user: User = JSON.parse(raw);
+    // Merge with persisted profile if available to ensure latest saved data
+    const persisted = loadUserProfile(user.id);
+    if (persisted) {
+      return { ...user, ...persisted };
+    }
+    return user;
   } catch {
     return null;
   }
@@ -323,6 +382,7 @@ export function saveCurrentUser(user: User | null): void {
   try {
     if (user) {
       localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(user));
+      saveUserProfile(user);
     } else {
       localStorage.removeItem(STORAGE_KEY_USER);
     }

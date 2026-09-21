@@ -5,6 +5,7 @@ import {
   saveClients, 
   loadCurrentUser, 
   saveCurrentUser, 
+  saveUserProfile,
   loadTheme, 
   saveTheme,
   deleteDocumentFile,
@@ -27,7 +28,9 @@ import { DocumentViewerModal } from './components/DocumentViewerModal';
 import { ImportExportModal } from './components/ImportExportModal';
 import { ArchitectureDocsModal } from './components/ArchitectureDocsModal';
 import { FirebaseTroubleshootModal } from './components/FirebaseTroubleshootModal';
+import { ProfileModal } from './components/ProfileModal';
 import { LoginView } from './components/LoginView';
+import { AdminView } from './components/AdminView';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(() => loadCurrentUser());
@@ -36,7 +39,7 @@ export default function App() {
     return loadClients(user?.id);
   });
   const [theme, setTheme] = useState<'light' | 'dark'>(() => loadTheme());
-  const [currentTab, setCurrentTab] = useState<'dashboard' | 'clients' | 'alerts' | 'birthdays'>('dashboard');
+  const [currentTab, setCurrentTab] = useState<'dashboard' | 'clients' | 'alerts' | 'birthdays' | 'admin'>('dashboard');
 
   // Modals state
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
@@ -52,6 +55,7 @@ export default function App() {
   const [isImportExportOpen, setIsImportExportOpen] = useState(false);
   const [isDocsOpen, setIsDocsOpen] = useState(false);
   const [isFirebaseTroubleshootOpen, setIsFirebaseTroubleshootOpen] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
   // Initialize theme class
   useEffect(() => {
@@ -66,17 +70,20 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = subscribeToAuthChanges((fbUser) => {
       if (fbUser) {
-        setCurrentUser(prev => {
-          const updated: User = {
-            id: fbUser.id,
-            name: fbUser.name || prev?.name || 'Corretor',
-            email: fbUser.email || prev?.email || '',
-            brokerageName: prev?.brokerageName || fbUser.brokerageName || 'Corretora de Seguros',
-            susep: prev?.susep || fbUser.susep || ''
-          };
-          saveCurrentUser(updated);
-          return updated;
+        setCurrentUser((prev) => {
+          if (
+            prev?.id === fbUser.id &&
+            prev?.name === fbUser.name &&
+            prev?.email === fbUser.email &&
+            prev?.isAdmin === fbUser.isAdmin &&
+            prev?.brokerageName === fbUser.brokerageName &&
+            prev?.susep === fbUser.susep
+          ) {
+            return prev;
+          }
+          return fbUser;
         });
+        saveCurrentUser(fbUser);
       }
     });
 
@@ -107,9 +114,15 @@ export default function App() {
   };
 
   const handleLogin = (user: User) => {
-    setCurrentUser(user);
+    saveUserProfile(user);
     saveCurrentUser(user);
-    setClients(loadClients(user.id));
+    setCurrentUser(user);
+  };
+
+  const handleUpdateUser = (updatedUser: User) => {
+    setCurrentUser(updatedUser);
+    saveCurrentUser(updatedUser);
+    saveUserProfile(updatedUser);
   };
 
   const handleLogout = async () => {
@@ -208,6 +221,7 @@ export default function App() {
         setCurrentTab={setCurrentTab}
         user={currentUser}
         onLogout={handleLogout}
+        onOpenProfile={() => setIsProfileModalOpen(true)}
         onOpenNewClient={handleOpenNewClient}
         onOpenImportExport={() => setIsImportExportOpen(true)}
         onOpenDocs={() => setIsDocsOpen(true)}
@@ -228,6 +242,7 @@ export default function App() {
             onViewDocument={handleViewDocument}
             onNavigateToClients={() => setCurrentTab('clients')}
             currentUser={currentUser}
+            onOpenProfile={() => setIsProfileModalOpen(true)}
             onOpenImportExport={() => setIsImportExportOpen(true)}
             onSeedDemoData={handleSeedDemoClients}
           />
@@ -259,6 +274,12 @@ export default function App() {
           <BirthdaysView
             clients={clients}
             onViewClientDetails={handleViewClientDetails}
+            currentUser={currentUser}
+          />
+        )}
+
+        {currentTab === 'admin' && (
+          <AdminView
             currentUser={currentUser}
           />
         )}
@@ -307,6 +328,14 @@ export default function App() {
       <FirebaseTroubleshootModal
         isOpen={isFirebaseTroubleshootOpen}
         onClose={() => setIsFirebaseTroubleshootOpen(false)}
+      />
+
+      <ProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
+        currentUser={currentUser}
+        onUpdateUser={handleUpdateUser}
+        onNavigateToAdmin={() => setCurrentTab('admin')}
       />
 
     </div>

@@ -26,7 +26,8 @@ import {
   getExpiryAlertLevel, 
   getWhatsAppLink, 
   getRenewalWhatsAppMessage, 
-  getBirthdayWhatsAppMessage 
+  getBirthdayWhatsAppMessage,
+  calculateExactAge
 } from '../utils/insuranceUtils';
 
 interface ClientDetailModalProps {
@@ -237,9 +238,14 @@ export const ClientDetailModal: React.FC<ClientDetailModalProps> = ({
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-slate-500">Data de Aniversário:</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1">
+                  <span className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                     <Cake className="w-3 h-3 text-purple-500" />
-                    {formatDateBR(client.birthDate)}
+                    <span>{formatDateBR(client.birthDate)}</span>
+                    {calculateExactAge(client.birthDate) !== null && (
+                      <span className="text-[10px] font-bold text-purple-700 dark:text-purple-300 bg-purple-100/70 dark:bg-purple-950/70 px-1.5 py-0.5 rounded">
+                        ({calculateExactAge(client.birthDate)} anos)
+                      </span>
+                    )}
                   </span>
                 </div>
               </div>

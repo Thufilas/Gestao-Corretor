@@ -20,10 +20,20 @@ import {
   Wrench,
   AlertTriangle,
   RefreshCw,
-  Copy
+  Copy,
+  Cake
 } from 'lucide-react';
 import { Client, ClientType, PolicyDocument } from '../types';
-import { POPULAR_INSURERS, formatCurrency, maskPhone } from '../utils/insuranceUtils';
+import { 
+  POPULAR_INSURERS, 
+  formatCurrency, 
+  maskPhone,
+  validateBirthDate,
+  calculateExactAge,
+  getMaxBirthDateString,
+  getMinBirthDateString,
+  BIRTH_DATE_ERROR_MESSAGE
+} from '../utils/insuranceUtils';
 import { saveDocumentFile } from '../services/storage';
 import { 
   isFirebaseConfigured, 
@@ -54,6 +64,8 @@ export const ClientModal: React.FC<ClientModalProps> = ({
 }) => {
   const [name, setName] = useState('');
   const [birthDate, setBirthDate] = useState('');
+  const [birthDateError, setBirthDateError] = useState<string | null>(null);
+  const [calculatedAge, setCalculatedAge] = useState<number | null>(null);
   const [insuranceCompany, setInsuranceCompany] = useState('Porto Seguro');
   const [customInsurer, setCustomInsurer] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -85,10 +97,28 @@ export const ClientModal: React.FC<ClientModalProps> = ({
   // Automatic calculation: Valor Total * (% / 100)
   const calculatedCommissionAmount = (totalInsuredValue || 0) * ((commissionRate || 0) / 100);
 
+  // Check if current birthDate is valid
+  const isBirthDateValid = birthDate.trim().length > 0 && !birthDateError && validateBirthDate(birthDate).isValid;
+  const isFormValid = name.trim().length > 0 && isBirthDateValid && !isUploading;
+
   useEffect(() => {
     if (clientToEdit) {
       setName(clientToEdit.name);
-      setBirthDate(clientToEdit.birthDate);
+      setBirthDate(clientToEdit.birthDate || '');
+      
+      if (clientToEdit.birthDate) {
+        const validation = validateBirthDate(clientToEdit.birthDate);
+        if (validation.isValid) {
+          setBirthDateError(null);
+          setCalculatedAge(validation.age ?? null);
+        } else {
+          setBirthDateError(validation.error || BIRTH_DATE_ERROR_MESSAGE);
+          setCalculatedAge(null);
+        }
+      } else {
+        setBirthDateError(null);
+        setCalculatedAge(null);
+      }
       
       if (POPULAR_INSURERS.includes(clientToEdit.insuranceCompany)) {
         setInsuranceCompany(clientToEdit.insuranceCompany);
@@ -115,8 +145,13 @@ export const ClientModal: React.FC<ClientModalProps> = ({
       nextYear.setFullYear(nextYear.getFullYear() + 1);
       const oneYearLater = nextYear.toISOString().split('T')[0];
 
+      const defaultBirthDate = '1990-01-01';
       setName('');
-      setBirthDate('1990-01-01');
+      setBirthDate(defaultBirthDate);
+      const initialValidation = validateBirthDate(defaultBirthDate);
+      setBirthDateError(null);
+      setCalculatedAge(initialValidation.age ?? null);
+
       setInsuranceCompany('Porto Seguro');
       setCustomInsurer('');
       setStartDate(today);
@@ -132,6 +167,26 @@ export const ClientModal: React.FC<ClientModalProps> = ({
     }
     setUploadError(null);
   }, [clientToEdit, isOpen]);
+
+  // Handle immediate birth date change & validation
+  const handleBirthDateChange = (val: string) => {
+    setBirthDate(val);
+    if (!val || !val.trim()) {
+      // Reset to default clean state when cleared without crashing or locking UI
+      setBirthDateError(null);
+      setCalculatedAge(null);
+      return;
+    }
+
+    const validation = validateBirthDate(val);
+    if (!validation.isValid) {
+      setBirthDateError(validation.error || BIRTH_DATE_ERROR_MESSAGE);
+      setCalculatedAge(null);
+    } else {
+      setBirthDateError(null);
+      setCalculatedAge(validation.age ?? null);
+    }
+  };
 
   // When start date changes on a new client, suggest end date + 1 year
   const handleStartDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -285,6 +340,12 @@ export const ClientModal: React.FC<ClientModalProps> = ({
       return;
     }
 
+    const birthValidation = validateBirthDate(birthDate);
+    if (!birthValidation.isValid) {
+      setBirthDateError(birthValidation.error || BIRTH_DATE_ERROR_MESSAGE);
+      return;
+    }
+
     const finalInsurer = insuranceCompany === 'Outra Seguradora' 
       ? (customInsurer.trim() || 'Outra Seguradora')
       : insuranceCompany;
@@ -292,7 +353,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({
     const updatedClient: Client = {
       id: clientToEdit ? clientToEdit.id : `cli-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
       name: name.trim(),
-      birthDate: birthDate || '1990-01-01',
+      birthDate: birthDate.trim(),
       insuranceCompany: finalInsurer,
       startDate: startDate || new Date().toISOString().split('T')[0],
       endDate: endDate || new Date().toISOString().split('T')[0],
@@ -366,17 +427,41 @@ export const ClientModal: React.FC<ClientModalProps> = ({
 
               {/* Data de Aniversário */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-purple-500" />
-                  Data de Aniversário *
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                    <Calendar className="w-3 h-3 text-purple-500" />
+                    Data de Aniversário *
+                  </label>
+                  {calculatedAge !== null && !birthDateError && (
+                    <span className="text-[10px] font-bold text-purple-700 dark:text-purple-300 bg-purple-100/80 dark:bg-purple-950/70 px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                      <Cake className="w-2.5 h-2.5 text-purple-500" />
+                      {calculatedAge} anos
+                    </span>
+                  )}
+                </div>
                 <input
+                  id="input-client-birthdate"
                   type="date"
                   required
+                  max={getMaxBirthDateString(16)}
+                  min={getMinBirthDateString(130)}
                   value={birthDate}
-                  onChange={(e) => setBirthDate(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-slate-900 dark:text-white"
+                  onChange={(e) => handleBirthDateChange(e.target.value)}
+                  className={`w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800/80 border text-slate-900 dark:text-white transition-colors focus:outline-none focus:ring-2 ${
+                    birthDateError
+                      ? 'border-rose-500 focus:ring-rose-500 bg-rose-50/20 dark:bg-rose-950/20'
+                      : 'border-slate-200 dark:border-slate-700 focus:ring-cyan-500'
+                  }`}
                 />
+                {birthDateError && (
+                  <p 
+                    id="client-birthdate-error-msg" 
+                    className="text-xs text-rose-500 dark:text-rose-400 mt-1.5 flex items-start gap-1 font-medium leading-tight animate-in fade-in duration-150"
+                  >
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-rose-500" />
+                    <span>{birthDateError}</span>
+                  </p>
+                )}
               </div>
 
               {/* Telefone / WhatsApp */}
@@ -775,7 +860,13 @@ export const ClientModal: React.FC<ClientModalProps> = ({
             <button
               type="submit"
               id="btn-save-client-submit"
-              className="px-6 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-700 active:scale-95 text-white text-xs font-bold shadow-md shadow-cyan-600/25 transition-all cursor-pointer"
+              disabled={!isFormValid}
+              className={`px-6 py-2 rounded-xl text-xs font-bold transition-all ${
+                !isFormValid
+                  ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed opacity-60 shadow-none'
+                  : 'bg-cyan-600 hover:bg-cyan-700 active:scale-95 text-white shadow-md shadow-cyan-600/25 cursor-pointer'
+              }`}
+              title={!isBirthDateValid ? 'A data de nascimento deve ser válida (16 a 130 anos e não futura) para salvar' : undefined}
             >
               {clientToEdit ? 'Atualizar Cliente' : 'Salvar Cliente'}
             </button>

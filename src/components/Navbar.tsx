@@ -12,16 +12,20 @@ import {
   Sun, 
   User as UserIcon,
   Plus,
-  Flame
+  Flame,
+  ShieldAlert,
+  Crown
 } from 'lucide-react';
 import { User } from '../types';
 import { isFirebaseConfigured } from '../services/firebase';
+import { getUserFirstName, isUserAdmin } from '../utils/insuranceUtils';
 
 interface NavbarProps {
-  currentTab: 'dashboard' | 'clients' | 'alerts' | 'birthdays';
-  setCurrentTab: (tab: 'dashboard' | 'clients' | 'alerts' | 'birthdays') => void;
+  currentTab: 'dashboard' | 'clients' | 'alerts' | 'birthdays' | 'admin';
+  setCurrentTab: (tab: 'dashboard' | 'clients' | 'alerts' | 'birthdays' | 'admin') => void;
   user: User | null;
   onLogout: () => void;
+  onOpenProfile?: () => void;
   onOpenNewClient: () => void;
   onOpenImportExport: () => void;
   onOpenDocs: () => void;
@@ -36,6 +40,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   setCurrentTab,
   user,
   onLogout,
+  onOpenProfile,
   onOpenNewClient,
   onOpenImportExport,
   onOpenDocs,
@@ -44,10 +49,13 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleTheme,
   criticalAlertsCount
 }) => {
+  const isAdmin = isUserAdmin(user);
+
   return (
     <header className="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
+          
           {/* Logo and Brand */}
           <div className="flex items-center gap-3">
             <button 
@@ -128,6 +136,22 @@ export const Navbar: React.FC<NavbarProps> = ({
               <Cake className="w-3.5 h-3.5" />
               <span>Aniversariantes</span>
             </button>
+
+            {/* Exclusive Admin Navigation Tab for System Administrator */}
+            {isAdmin && (
+              <button
+                id="nav-tab-admin"
+                onClick={() => setCurrentTab('admin')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  currentTab === 'admin'
+                    ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-xs'
+                    : 'text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40'
+                }`}
+              >
+                <Crown className="w-3.5 h-3.5" />
+                <span>Painel Admin</span>
+              </button>
+            )}
           </nav>
 
           {/* Right Action buttons */}
@@ -187,21 +211,53 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             {/* User Profile & Logout */}
             <div className="flex items-center pl-1 border-l border-slate-200 dark:border-slate-700">
-              <div className="hidden xl:flex flex-col items-end mr-2 text-right">
-                <div className="flex items-center gap-1.5">
-                  {isFirebaseConfigured() && (
-                    <span title="Firebase Auth & Storage Ativos">
-                      <Flame className="w-3 h-3 text-amber-500 fill-amber-500/30" />
+              <button
+                id="btn-nav-user-profile"
+                type="button"
+                onClick={onOpenProfile}
+                className="hidden xl:flex items-center gap-2 mr-2 px-2.5 py-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-right cursor-pointer group"
+                title="Editar Perfil do Corretor"
+              >
+                <div className={`w-7 h-7 rounded-lg text-white flex items-center justify-center text-xs font-bold shadow-xs group-hover:scale-105 transition-transform ${
+                  isAdmin 
+                    ? 'bg-gradient-to-tr from-amber-500 to-amber-700' 
+                    : 'bg-gradient-to-tr from-cyan-600 to-blue-600'
+                }`}>
+                  {isAdmin ? <Crown className="w-3.5 h-3.5" /> : <UserIcon className="w-3.5 h-3.5" />}
+                </div>
+                <div className="flex flex-col items-start text-left">
+                  <div className="flex items-center gap-1.5">
+                    {isAdmin ? (
+                      <span className="text-[10px] font-extrabold px-1 rounded bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                        ADMIN
+                      </span>
+                    ) : (
+                      isFirebaseConfigured() && (
+                        <span title="Firebase Auth & Storage Ativos">
+                          <Flame className="w-3 h-3 text-amber-500 fill-amber-500/30" />
+                        </span>
+                      )
+                    )}
+                    <span id="nav-user-first-name" className="text-xs font-bold text-slate-800 dark:text-slate-200 leading-tight group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
+                      {getUserFirstName(user)}
                     </span>
-                  )}
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 leading-tight">
-                    {user?.name || 'Corretor'}
+                  </div>
+                  <span className="text-[10px] text-slate-400">
+                    {isAdmin ? 'Administrador Master' : (user?.susep ? `SUSEP ${user.susep}` : (isFirebaseConfigured() ? 'Firebase Autenticado' : 'Modo Demo'))}
                   </span>
                 </div>
-                <span className="text-[10px] text-slate-400">
-                  {user?.susep ? `SUSEP ${user.susep}` : (isFirebaseConfigured() ? 'Firebase Autenticado' : 'Modo Demo')}
-                </span>
-              </div>
+              </button>
+
+              {/* Mobile Profile Trigger */}
+              <button
+                id="btn-nav-user-profile-mobile"
+                type="button"
+                onClick={onOpenProfile}
+                className="xl:hidden p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                title="Editar Perfil do Corretor"
+              >
+                {isAdmin ? <Crown className="w-4 h-4 text-amber-500" /> : <UserIcon className="w-4 h-4" />}
+              </button>
 
               <button
                 id="btn-nav-logout"
@@ -256,6 +312,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             <Cake className="w-4 h-4" />
             <span>Niver</span>
           </button>
+
+          {isAdmin && (
+            <button
+              onClick={() => setCurrentTab('admin')}
+              className={`flex flex-col items-center py-1 px-2 font-bold ${
+                currentTab === 'admin' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'
+              }`}
+            >
+              <Crown className="w-4 h-4 text-amber-500" />
+              <span>Admin</span>
+            </button>
+          )}
         </div>
       </div>
     </header>

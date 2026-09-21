@@ -31,7 +31,8 @@ import {
   getUpcomingBirthdays, 
   getWhatsAppLink, 
   getRenewalWhatsAppMessage, 
-  getBirthdayWhatsAppMessage 
+  getBirthdayWhatsAppMessage,
+  getUserFirstName
 } from '../utils/insuranceUtils';
 import { 
   exportClientsToExcel, 
@@ -47,6 +48,7 @@ interface DashboardProps {
   onViewDocument: (client: Client) => void;
   onNavigateToClients: () => void;
   currentUser: User | null;
+  onOpenProfile?: () => void;
   onOpenImportExport?: () => void;
   onSeedDemoData?: () => void;
 }
@@ -59,6 +61,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onViewDocument,
   onNavigateToClients,
   currentUser,
+  onOpenProfile,
   onOpenImportExport,
   onSeedDemoData
 }) => {
@@ -192,9 +195,22 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </span>
             </div>
 
-            <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white">
-              Olá, {currentUser?.name || 'Corretor'}!
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white">
+                Olá, {getUserFirstName(currentUser)}!
+              </h1>
+              {onOpenProfile && (
+                <button
+                  type="button"
+                  id="btn-dashboard-edit-profile"
+                  onClick={onOpenProfile}
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-white/10 hover:bg-white/20 text-cyan-200 border border-white/10 transition-colors cursor-pointer"
+                  title="Editar Perfil do Corretor"
+                >
+                  Editar Perfil
+                </button>
+              )}
+            </div>
             <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-xl">
               {clients.length === 0
                 ? 'Sua carteira no GestãoCorretor está pronta para receber seus cadastros. Cadastre apólices manualmente ou importe sua planilha do Excel.'
