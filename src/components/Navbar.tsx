@@ -10,14 +10,14 @@ import {
   Sun, 
   User as UserIcon,
   Crown,
-  Briefcase
+  Building2
 } from 'lucide-react';
 import { User } from '../types';
-import { getUserFirstName, canAccessAdminPanel, isMasterAdmin, isSubAdmin } from '../utils/insuranceUtils';
+import { getUserFirstName, isMasterAdmin, isSubAdmin } from '../utils/insuranceUtils';
 
 interface NavbarProps {
-  currentTab: 'dashboard' | 'clients' | 'alerts' | 'birthdays' | 'admin';
-  setCurrentTab: (tab: 'dashboard' | 'clients' | 'alerts' | 'birthdays' | 'admin') => void;
+  currentTab: 'dashboard' | 'clients' | 'alerts' | 'birthdays' | 'admin' | 'corretora';
+  setCurrentTab: (tab: 'dashboard' | 'clients' | 'alerts' | 'birthdays' | 'admin' | 'corretora') => void;
   user: User | null;
   onLogout: () => void;
   onOpenProfile?: () => void;
@@ -40,9 +40,20 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleTheme,
   criticalAlertsCount
 }) => {
-  const hasAdminAccess = canAccessAdminPanel(user);
-  const isMaster = isMasterAdmin(user);
-  const isSub = isSubAdmin(user);
+  // Normalização da role para aceitar variações de caixa/string
+  const userRoleUpper = String(user?.role || '').toUpperCase();
+
+  // Verificação de Admin Master
+  const isMaster = Boolean(
+    user && (userRoleUpper === 'MASTER' || userRoleUpper === 'ADMIN' || isMasterAdmin(user))
+  );
+
+  // Verificação de Sub-Admin/Gestor
+  const isSubRole = userRoleUpper === 'SUB_ADMIN' || userRoleUpper === 'SUBADMIN' || userRoleUpper === 'GESTOR' || isSubAdmin(user);
+  const hasCorretora = Boolean(user?.corretora_id || user?.brokerageId || user?.brokerageName);
+  
+  // Exibe a aba "Corretora" se o usuário for Sub-Admin
+  const isSub = isSubRole && hasCorretora;
 
   return (
     <header className="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors">
@@ -129,35 +140,48 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span>Aniversariantes</span>
             </button>
 
-            {/* Exclusive Admin Navigation Tab for Master Admin and Sub-Admin */}
-            {hasAdminAccess && (
+            {/* Master Admin Tab */}
+            {isMaster && (
               <button
                 id="nav-tab-admin"
                 onClick={() => setCurrentTab('admin')}
                 className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
                   currentTab === 'admin'
-                    ? isMaster 
-                      ? 'bg-amber-500 text-white shadow-xs font-bold'
-                      : 'bg-cyan-600 text-white shadow-xs font-bold'
-                    : isMaster
-                      ? 'text-amber-700 dark:text-amber-300 hover:text-amber-800 dark:hover:text-amber-200 hover:bg-amber-100/80 dark:hover:bg-amber-950/60'
-                      : 'text-cyan-700 dark:text-cyan-300 hover:text-cyan-800 dark:hover:text-cyan-200 hover:bg-cyan-100/80 dark:hover:bg-cyan-950/60'
+                    ? 'bg-indigo-600 text-white shadow-xs font-bold'
+                    : 'text-indigo-700 dark:text-indigo-300 hover:text-indigo-800 dark:hover:text-indigo-200 hover:bg-indigo-100/80 dark:hover:bg-indigo-950/60'
                 }`}
               >
-                {isMaster ? (
-                  <Crown className="w-4 h-4 shrink-0 text-amber-300" />
-                ) : (
-                  <ShieldCheck className="w-4 h-4 shrink-0 text-cyan-300" />
-                )}
-                <span>{isMaster ? 'Painel Admin' : 'Gestão da Equipe'}</span>
+                <Crown className="w-4 h-4 shrink-0 text-indigo-300" />
+                <span>Painel Admin</span>
                 <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
                   currentTab === 'admin'
                     ? 'bg-black/20 text-white'
-                    : isMaster
-                      ? 'bg-amber-200/80 dark:bg-amber-950/90 text-amber-800 dark:text-amber-300 border border-amber-300/80 dark:border-amber-800/80'
-                      : 'bg-cyan-200/80 dark:bg-cyan-950/90 text-cyan-800 dark:text-cyan-300 border border-cyan-300/80 dark:border-cyan-800/80'
+                    : 'bg-indigo-100 dark:bg-indigo-950/90 text-indigo-800 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80'
                 }`}>
-                  {isMaster ? 'Master' : 'Gestor'}
+                  Master
+                </span>
+              </button>
+            )}
+
+            {/* Sub-Admin Brokerage Tab */}
+            {isSub && (
+              <button
+                id="nav-tab-corretora"
+                onClick={() => setCurrentTab('corretora')}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
+                  currentTab === 'corretora'
+                    ? 'bg-indigo-600 text-white shadow-xs font-bold'
+                    : 'text-indigo-700 dark:text-indigo-300 hover:text-indigo-800 dark:hover:text-indigo-200 hover:bg-indigo-100/80 dark:hover:bg-indigo-950/60'
+                }`}
+              >
+                <Building2 className="w-4 h-4 shrink-0 text-indigo-300" />
+                <span>Corretora</span>
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                  currentTab === 'corretora'
+                    ? 'bg-black/20 text-white'
+                    : 'bg-indigo-100 dark:bg-indigo-950/90 text-indigo-800 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80'
+                }`}>
+                  Gestor
                 </span>
               </button>
             )}
@@ -166,7 +190,6 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Right Action Controls & User Profile */}
           <div className="flex items-center gap-2 sm:gap-3">
             
-            {/* User Profile Trigger Button */}
             <button
               id="btn-nav-user-profile"
               type="button"
@@ -207,10 +230,8 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             </button>
 
-            {/* Separator */}
             <div className="h-5 w-px bg-slate-200 dark:bg-slate-800 hidden sm:block" />
 
-            {/* Dark/Light Theme Toggle */}
             <button
               id="btn-nav-theme-toggle"
               onClick={onToggleTheme}
@@ -220,7 +241,6 @@ export const Navbar: React.FC<NavbarProps> = ({
               {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-600" />}
             </button>
 
-            {/* Logout Button */}
             <button
               id="btn-nav-logout"
               onClick={onLogout}
@@ -275,17 +295,29 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span>Niver</span>
           </button>
 
-          {hasAdminAccess && (
+          {isMaster && (
             <button
+              id="mobile-nav-tab-admin"
               onClick={() => setCurrentTab('admin')}
               className={`flex flex-col items-center py-1 px-2 font-bold ${
-                currentTab === 'admin' 
-                  ? isMaster ? 'text-amber-600 dark:text-amber-400' : 'text-cyan-600 dark:text-cyan-400'
-                  : 'text-slate-500'
+                currentTab === 'admin' ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500'
               }`}
             >
-              {isMaster ? <Crown className="w-4 h-4 text-amber-500" /> : <ShieldCheck className="w-4 h-4 text-cyan-500" />}
-              <span>{isMaster ? 'Admin' : 'Equipe'}</span>
+              <Crown className="w-4 h-4 text-indigo-500" />
+              <span>Admin</span>
+            </button>
+          )}
+
+          {isSub && (
+            <button
+              id="mobile-nav-tab-corretora"
+              onClick={() => setCurrentTab('corretora')}
+              className={`flex flex-col items-center py-1 px-2 font-bold ${
+                currentTab === 'corretora' ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500'
+              }`}
+            >
+              <Building2 className="w-4 h-4 text-indigo-500" />
+              <span>Corretora</span>
             </button>
           )}
         </div>

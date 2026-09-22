@@ -17,6 +17,12 @@ import {
   doc, 
   getDoc, 
   setDoc, 
+  deleteDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  onSnapshot,
   Firestore 
 } from 'firebase/firestore';
 import { 
@@ -28,9 +34,9 @@ import {
   deleteObject,
   FirebaseStorage 
 } from 'firebase/storage';
-import { User } from '../types';
-import { loadUserProfile, saveUserProfile } from './storage';
-import { isUserAdmin } from '../utils/insuranceUtils';
+import { User, Client, BrokerAccount, UserRole } from '../types';
+import { loadUserProfile, saveUserProfile, loadCurrentUser, saveCurrentUser } from './storage';
+import { isUserAdmin, isMasterAdmin, isSubAdmin, getUserCorretoraId } from '../utils/insuranceUtils';
 
 const STORAGE_KEY_CUSTOM_FIREBASE_CONFIG = 'gestao_corretor_firebase_config_v1';
 
@@ -201,19 +207,251 @@ export async function fetchUserProfileFromFirestore(userId: string): Promise<Par
   return null;
 }
 
+export function subscribeUserProfileFromFirestore(
+  userId: string,
+  onUpdate: (data: Partial<User> | null) => void
+): () => void {
+  const db = getFirebaseFirestore();
+  if (!db || !userId) {
+    return () => {};
+  }
+  try {
+    const userDocRef = doc(db, 'users', userId);
+    const unsubscribe = onSnapshot(
+      userDocRef,
+      (snap) => {
+        if (snap.exists()) {
+          onUpdate(snap.data() as Partial<User>);
+        } else {
+          onUpdate(null);
+        }
+      },
+      (err) => {
+        console.warn('Realtime profile snapshot listener warning:', err);
+      }
+    );
+    return unsubscribe;
+  } catch (err) {
+    console.warn('Could not attach profile listener:', err);
+    return () => {};
+  }
+}
+
 export async function saveUserProfileToFirestore(userId: string, data: Partial<User>): Promise<void> {
   const db = getFirebaseFirestore();
   if (!db || !userId) return;
   try {
     const userDocRef = doc(db, 'users', userId);
-    const payload = {
+
+    // Absolute Security Validation on MASTER role:
+    // Only the unique Master Admin principal UID / email is permitted to hold MASTER / admin role.
+    const isMasterUid = userId === 'bn5feEaSfUUClzVtFD5Q79Cx5112' || (data.email && data.email.toLowerCase() === 'admin@gestaocorretor.com.br');
+    
+    let firestoreRole: 'MASTER' | 'SUB_ADMIN' | 'CORRETOR' = 'CORRETOR';
+    let appRole: UserRole = 'broker';
+    let isAdmin = false;
+
+    if (isMasterUid) {
+      firestoreRole = 'MASTER';
+      appRole = 'admin';
+      isAdmin = true;
+    } else if (data.role === 'subadmin' || data.role === 'SUB_ADMIN') {
+      firestoreRole = 'SUB_ADMIN';
+      appRole = 'subadmin';
+      isAdmin = true;
+    } else {
+      firestoreRole = 'CORRETOR';
+      appRole = 'broker';
+      isAdmin = false;
+    }
+
+    const corretoraId = data.corretora_id || data.brokerageId || '';
+    const brokerageName = data.brokerageName || '';
+    const fullName = data.name || ([data.firstName, data.lastName].filter(Boolean).join(' ')) || '';
+
+    const payload: Record<string, any> = {
       ...data,
       id: userId,
+      uid: userId,
+      name: fullName,
+      nome: fullName,
+      role: firestoreRole,
+      userRole: appRole,
+      isAdmin,
+      corretora_id: corretoraId,
+      brokerageId: corretoraId,
+      brokerageName,
+      status: data.status || 'active',
       updatedAt: new Date().toISOString()
     };
+
+    if (data.susep !== undefined) {
+      payload.susep = data.susep;
+    }
+
     await setDoc(userDocRef, payload, { merge: true });
   } catch (err) {
     console.warn('Could not write user profile to Firestore:', err);
+  }
+}
+
+/**
+ * Multi-Tenant Firestore Query: Fetch users filtered strictly by role and brokerage.
+ * - Master Admin: Has access to all users across all brokerages.
+ * - Sub-Admin: Locked strictly by `where("corretora_id", "==", currentUser.corretora_id)`.
+ * - Standard Broker: Allowed only their own document.
+ */
+export async function fetchFirestoreUsersByBrokerage(currentUser?: User | null): Promise<User[]> {
+  const db = getFirebaseFirestore();
+  if (!db || !currentUser) return [];
+
+  try {
+    const isMaster = isMasterAdmin(currentUser);
+    const isSub = isSubAdmin(currentUser);
+    const corretoraId = getUserCorretoraId(currentUser);
+
+    const usersCol = collection(db, 'users');
+    let q;
+
+    if (isMaster) {
+      // Unrestricted Master Global access
+      q = query(usersCol);
+    } else if (isSub) {
+      if (!corretoraId) {
+        console.warn('Sub-admin without corretora_id attempted to fetch users');
+        return [];
+      }
+      // Strict multi-tenant filter for Sub-Admin
+      q = query(usersCol, where('corretora_id', '==', corretoraId));
+    } else {
+      // Standard broker can only view themselves
+      const myDocRef = doc(db, 'users', currentUser.id);
+      const snap = await getDoc(myDocRef);
+      if (snap.exists()) {
+        const uData = snap.data() as User;
+        return [{ ...uData, id: snap.id }];
+      }
+      return [currentUser];
+    }
+
+    const querySnapshot = await getDocs(q);
+    const results: User[] = [];
+
+    querySnapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      const rawRole = data.role || data.userRole;
+      let normRole: UserRole = 'broker';
+      if (rawRole === 'MASTER' || rawRole === 'ADMIN' || rawRole === 'admin') {
+        normRole = 'admin';
+      } else if (rawRole === 'SUB_ADMIN' || rawRole === 'subadmin') {
+        normRole = 'subadmin';
+      } else {
+        normRole = 'broker';
+      }
+
+      results.push({
+        id: docSnap.id,
+        name: data.nome || data.name || 'Corretor',
+        firstName: data.firstName || (data.name ? data.name.split(/\s+/)[0] : 'Corretor'),
+        lastName: data.lastName !== undefined ? data.lastName : (data.name ? data.name.split(/\s+/).slice(1).join(' ') : ''),
+        email: data.email || '',
+        brokerageName: data.brokerageName || 'Corretora de Seguros',
+        brokerageId: data.corretora_id || data.brokerageId,
+        corretora_id: data.corretora_id || data.brokerageId,
+        susep: data.susep || '',
+        role: normRole,
+        isAdmin: normRole === 'admin' || normRole === 'subadmin',
+        status: data.status === 'inativo' || data.status === 'inactive' ? 'inactive' : 'active',
+        createdAt: data.createdAt || new Date().toISOString()
+      });
+    });
+
+    return results;
+  } catch (err) {
+    console.warn('Error querying users from Firestore:', err);
+    return [];
+  }
+}
+
+/**
+ * Multi-Tenant Firestore Query: Fetch insurance clients / policies filtered by brokerage.
+ * - Master Admin: Fetches all clients or by target brokerage.
+ * - Sub-Admin: Enforces `where("corretora_id", "==", currentUser.corretora_id)`.
+ * - Standard Broker: Enforces `where("corretor_id", "==", currentUser.id)` or `where("userId", "==", currentUser.id)`.
+ */
+export async function fetchFirestoreClientsByBrokerage(currentUser?: User | null): Promise<Client[]> {
+  const db = getFirebaseFirestore();
+  if (!db || !currentUser) return [];
+
+  try {
+    const isMaster = isMasterAdmin(currentUser);
+    const isSub = isSubAdmin(currentUser);
+    const corretoraId = getUserCorretoraId(currentUser);
+
+    const clientsCol = collection(db, 'clients');
+    let q;
+
+    if (isMaster) {
+      q = query(clientsCol);
+    } else if (isSub) {
+      if (!corretoraId) return [];
+      q = query(clientsCol, where('corretora_id', '==', corretoraId));
+    } else {
+      q = query(clientsCol, where('corretor_id', '==', currentUser.id));
+    }
+
+    const querySnapshot = await getDocs(q);
+    const results: Client[] = [];
+
+    querySnapshot.forEach((docSnap) => {
+      const data = docSnap.data() as Client;
+      results.push({
+        ...data,
+        id: docSnap.id
+      });
+    });
+
+    return results;
+  } catch (err) {
+    console.warn('Error querying clients from Firestore:', err);
+    return [];
+  }
+}
+
+/**
+ * Persist client to Firestore with corretora_id and corretor_id multi-tenant keys
+ */
+export async function saveClientToFirestore(client: Client, currentUser?: User | null): Promise<void> {
+  const db = getFirebaseFirestore();
+  if (!db || !client || !client.id) return;
+
+  try {
+    const clientRef = doc(db, 'clients', client.id);
+    const payload = {
+      ...client,
+      corretora_id: getUserCorretoraId(currentUser) || currentUser?.brokerageId || '',
+      corretor_id: currentUser?.id || '',
+      brokerageName: currentUser?.brokerageName || '',
+      updatedAt: new Date().toISOString()
+    };
+    await setDoc(clientRef, payload, { merge: true });
+  } catch (err) {
+    console.warn('Error saving client to Firestore:', err);
+  }
+}
+
+/**
+ * Delete client from Firestore
+ */
+export async function deleteClientFromFirestore(clientId: string): Promise<void> {
+  const db = getFirebaseFirestore();
+  if (!db || !clientId) return;
+
+  try {
+    const clientRef = doc(db, 'clients', clientId);
+    await deleteDoc(clientRef);
+  } catch (err) {
+    console.warn('Error deleting client from Firestore:', err);
   }
 }
 
@@ -334,7 +572,7 @@ export async function firebaseCreateUserByAdmin(params: {
   lastName?: string;
   brokerageName?: string;
   brokerageId?: string;
-  role?: 'admin' | 'subadmin' | 'broker';
+  role?: UserRole;
   susep?: string;
 }): Promise<{ uid: string; user: User }> {
   const config = getFirebaseConfig();
@@ -357,32 +595,67 @@ export async function firebaseCreateUserByAdmin(params: {
   const derivedLastName = params.lastName?.trim() || fullName.split(/\s+/).slice(1).join(' ') || '';
 
   // Generate a unique temporary app name to ensure total isolation from current admin session
-  const tempAppName = `fb_admin_create_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  let tempApp: FirebaseApp | null = null;
+  const secondaryAppName = `SecondaryApp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  let secondaryApp: FirebaseApp | null = null;
 
   try {
-    tempApp = initializeApp(config, tempAppName);
-    const tempAuth = getAuth(tempApp);
+    secondaryApp = initializeApp(config, secondaryAppName);
+    const secondaryAuth = getAuth(secondaryApp);
 
-    // Create user in Firebase Authentication
-    const credential = await createUserWithEmailAndPassword(tempAuth, cleanEmail, cleanPass);
+    // 1. Create user in Firebase Authentication on secondary auth instance
+    const credential = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, cleanPass);
     const createdFbUser = credential.user;
     const uid = createdFbUser.uid;
 
-    // Update display name on the auth profile
+    // Update display name on auth profile
     if (fullName) {
       try {
         await updateProfile(createdFbUser, { displayName: fullName });
       } catch (profileErr) {
-        console.warn('Could not update displayName on new Firebase Auth user:', profileErr);
+        console.warn('Could not update displayName on secondary Firebase Auth user:', profileErr);
       }
     }
 
-    // Sign out from the temporary auth session immediately to avoid any token leak
+    // 2. Sign out from secondary auth instance immediately
     try {
-      await signOut(tempAuth);
+      await signOut(secondaryAuth);
     } catch {
-      // Ignore sign out error on temp app
+      // Ignore sign out error on secondary app
+    }
+
+    // Format role according to requirement: "MASTER", "SUB_ADMIN", "CORRETOR"
+    const firestoreRole = (params.role === 'admin' || params.role === 'MASTER')
+      ? 'MASTER' 
+      : ((params.role === 'subadmin' || params.role === 'SUB_ADMIN') ? 'SUB_ADMIN' : 'CORRETOR');
+    const effectiveBrokerageId = params.brokerageId || 'corretora-finage';
+    const effectiveBrokerageName = params.brokerageName?.trim() || 'Minha Corretora de Seguros';
+    const nowIso = new Date().toISOString();
+
+    // 3. Save document in Firestore 'users' collection with doc ID = uid
+    const firestoreDoc = {
+      uid,
+      id: uid,
+      nome: fullName,
+      name: fullName,
+      email: cleanEmail,
+      corretora_id: effectiveBrokerageId,
+      brokerageId: effectiveBrokerageId,
+      brokerageName: effectiveBrokerageName,
+      role: firestoreRole,
+      userRole: params.role || 'broker',
+      status: 'ativo',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      susep: params.susep?.trim() || '',
+      firstName: derivedFirstName,
+      lastName: derivedLastName,
+      isAdmin: firestoreRole === 'MASTER' || firestoreRole === 'SUB_ADMIN'
+    };
+
+    const db = getFirebaseFirestore();
+    if (db) {
+      const userDocRef = doc(db, 'users', uid);
+      await setDoc(userDocRef, firestoreDoc, { merge: true });
     }
 
     const appUser: User = {
@@ -390,22 +663,22 @@ export async function firebaseCreateUserByAdmin(params: {
       name: fullName,
       firstName: derivedFirstName,
       lastName: derivedLastName,
-      email: createdFbUser.email || cleanEmail,
-      brokerageName: params.brokerageName?.trim() || 'Minha Corretora de Seguros',
-      brokerageId: params.brokerageId,
+      email: cleanEmail,
+      brokerageName: effectiveBrokerageName,
+      brokerageId: effectiveBrokerageId,
+      corretora_id: effectiveBrokerageId,
       susep: params.susep?.trim() || '',
       role: params.role || 'broker',
-      isAdmin: params.role === 'admin' || params.role === 'subadmin',
+      isAdmin: firestoreRole === 'MASTER' || firestoreRole === 'SUB_ADMIN',
       status: 'active'
     };
 
-    // Save profile to local storage cache and remote Firestore
+    // Save profile to local storage cache
     saveUserProfile(appUser);
-    await saveUserProfileToFirestore(uid, appUser);
 
     return { uid, user: appUser };
   } catch (err: unknown) {
-    console.error('Firebase Auth createUser error:', err);
+    console.error('Firebase Auth createUser error in secondary app:', err);
     
     // Parse common Firebase Auth errors into friendly Portuguese
     let errorMessage = 'Erro ao criar conta no Firebase Authentication.';
@@ -427,64 +700,15 @@ export async function firebaseCreateUserByAdmin(params: {
     }
     throw new Error(errorMessage);
   } finally {
-    // Always clean up the temporary app instance
-    if (tempApp) {
+    // 4. Always clean up the secondary app instance to free memory
+    if (secondaryApp) {
       try {
-        await deleteApp(tempApp);
+        await deleteApp(secondaryApp);
       } catch (delErr) {
-        console.warn('Could not delete temporary Firebase app:', delErr);
+        console.warn('Could not delete secondary Firebase app:', delErr);
       }
     }
   }
-}
-
-export async function firebaseSignUp(
-  email: string, 
-  password: string, 
-  name: string, 
-  brokerageName: string, 
-  susep?: string,
-  firstName?: string,
-  lastName?: string
-): Promise<User> {
-  const auth = getFirebaseAuth();
-  if (!auth) {
-    throw new Error('Firebase Auth não está configurado. Verifique as credenciais do Firebase.');
-  }
-
-  const credential = await createUserWithEmailAndPassword(auth, email.trim(), password);
-  const fullName = name.trim() || [firstName, lastName].filter(Boolean).join(' ') || 'Corretor de Seguros';
-  
-  if (fullName && credential.user) {
-    try {
-      await updateProfile(credential.user, {
-        displayName: fullName
-      });
-    } catch (e) {
-      console.warn('Could not update Firebase Auth displayName:', e);
-    }
-  }
-
-  const derivedFirstName = firstName?.trim() || fullName.split(/\s+/)[0] || 'Corretor';
-  const derivedLastName = lastName?.trim() || fullName.split(/\s+/).slice(1).join(' ') || '';
-
-  const appUser: User = {
-    id: credential.user.uid,
-    name: fullName,
-    firstName: derivedFirstName,
-    lastName: derivedLastName,
-    email: credential.user.email || email,
-    brokerageName: brokerageName.trim() || 'Minha Corretora de Seguros',
-    susep: susep?.trim() || ''
-  };
-
-  // 1. Save locally per-user
-  saveUserProfile(appUser);
-
-  // 2. Persist to Firestore
-  await saveUserProfileToFirestore(appUser.id, appUser);
-
-  return appUser;
 }
 
 export async function firebaseSignIn(email: string, password: string): Promise<User> {
@@ -500,20 +724,40 @@ export async function firebaseSignIn(email: string, password: string): Promise<U
   const authTime = performance.now() - startTime;
   console.info(`[Auth Performance] signInWithEmailAndPassword concluído em ${Math.round(authTime)}ms`);
 
-  // 2. Fast-Path: build essential user profile immediately from local cache and auth metadata
-  const localDoc = loadUserProfile(fbUser.uid);
-  const fullName = localDoc?.name || fbUser.displayName || fbUser.email?.split('@')[0] || 'Corretor';
-  const nameParts = fullName.trim().split(/\s+/);
-  const firstName = localDoc?.firstName || nameParts[0] || 'Corretor';
-  const lastName = localDoc?.lastName !== undefined ? localDoc.lastName : (nameParts.slice(1).join(' ') || '');
-  const brokerageName = localDoc?.brokerageName || 'Corretora de Seguros';
-  const susep = localDoc?.susep || '';
+  // 2. Fetch remote document from Firestore ('users' collection) with priority parallel race (max 1.5s)
+  let remoteDoc: any = null;
+  try {
+    const fetchPromise = fetchUserProfileFromFirestore(fbUser.uid);
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500));
+    remoteDoc = await Promise.race([fetchPromise, timeoutPromise]);
+  } catch (e) {
+    console.warn('Firestore profile fetch warning during sign-in:', e);
+  }
 
-  const adminFlag = isUserAdmin({
-    id: fbUser.uid,
-    isAdmin: localDoc?.isAdmin,
-    email: fbUser.email || email
-  });
+  const localDoc = loadUserProfile(fbUser.uid);
+
+  // Normalize role from Firestore (supports "MASTER", "SUB_ADMIN", "CORRETOR", "ADMIN", or lowercase)
+  const rawRole = remoteDoc?.role || remoteDoc?.userRole || localDoc?.role;
+  let normalizedRole: 'admin' | 'subadmin' | 'broker' = 'broker';
+  if (rawRole === 'SUB_ADMIN' || rawRole === 'subadmin') {
+    normalizedRole = 'subadmin';
+  } else if (rawRole === 'CORRETOR' || rawRole === 'broker') {
+    normalizedRole = 'broker';
+  } else if (rawRole === 'MASTER' || (rawRole === 'ADMIN' && isMasterAdmin({ email: fbUser.email || email, id: fbUser.uid })) || isMasterAdmin({ email: fbUser.email || email, id: fbUser.uid })) {
+    normalizedRole = 'admin';
+  } else {
+    normalizedRole = 'broker';
+  }
+
+  const fullName = remoteDoc?.nome || remoteDoc?.name || localDoc?.name || fbUser.displayName || fbUser.email?.split('@')[0] || 'Corretor';
+  const nameParts = fullName.trim().split(/\s+/);
+  const firstName = remoteDoc?.firstName || localDoc?.firstName || nameParts[0] || 'Corretor';
+  const lastName = remoteDoc?.lastName !== undefined ? remoteDoc.lastName : (localDoc?.lastName !== undefined ? localDoc.lastName : (nameParts.slice(1).join(' ') || ''));
+  const brokerageName = remoteDoc?.brokerageName || localDoc?.brokerageName || 'Corretora de Seguros';
+  const brokerageId = remoteDoc?.corretora_id || remoteDoc?.brokerageId || localDoc?.corretora_id || localDoc?.brokerageId;
+  const susep = remoteDoc?.susep !== undefined ? remoteDoc.susep : (localDoc?.susep || '');
+
+  const adminFlag = normalizedRole === 'admin' || normalizedRole === 'subadmin';
 
   const appUser: User = {
     id: fbUser.uid,
@@ -522,37 +766,18 @@ export async function firebaseSignIn(email: string, password: string): Promise<U
     lastName,
     email: fbUser.email || email,
     brokerageName,
+    brokerageId,
+    corretora_id: brokerageId,
     susep,
-    isAdmin: adminFlag
+    role: normalizedRole,
+    isAdmin: adminFlag,
+    status: remoteDoc?.status === 'ativo' || remoteDoc?.status === 'active' ? 'active' : (localDoc?.status || 'active')
   };
 
-  // Persist combined profile immediately
+  // Persist combined profile immediately in both profile and current session storage
   saveUserProfile(appUser);
-  console.info(`[Auth Performance] Sessão do utilizador autorizada em ${Math.round(performance.now() - startTime)}ms (Fast-Path)`);
-
-  // 3. Deferred / Background Sync: Fetch remote Firestore profile without blocking login transition
-  fetchUserProfileFromFirestore(fbUser.uid)
-    .then((remoteDoc) => {
-      if (remoteDoc) {
-        const updatedUser: User = {
-          ...appUser,
-          name: remoteDoc.name || appUser.name,
-          firstName: remoteDoc.firstName || appUser.firstName,
-          lastName: remoteDoc.lastName !== undefined ? remoteDoc.lastName : appUser.lastName,
-          brokerageName: remoteDoc.brokerageName || appUser.brokerageName,
-          susep: remoteDoc.susep !== undefined ? remoteDoc.susep : appUser.susep,
-          isAdmin: isUserAdmin({
-            id: fbUser.uid,
-            isAdmin: remoteDoc.isAdmin !== undefined ? remoteDoc.isAdmin : appUser.isAdmin,
-            email: fbUser.email || email
-          })
-        };
-        saveUserProfile(updatedUser);
-      }
-    })
-    .catch((e) => {
-      console.warn('Background Firestore profile sync warning:', e);
-    });
+  saveCurrentUser(appUser);
+  console.info(`[Auth Performance] Sessão do utilizador autorizada em ${Math.round(performance.now() - startTime)}ms`);
 
   return appUser;
 }
@@ -668,67 +893,96 @@ export function subscribeToAuthChanges(callback: (user: User | null) => void): (
 
   return onAuthStateChanged(auth, (fbUser: FirebaseUser | null) => {
     if (fbUser) {
-      // Avoid duplicate trigger if UID hasn't changed
-      if (activeAuthSubscriberUid === fbUser.uid) {
-        return;
-      }
-      activeAuthSubscriberUid = fbUser.uid;
-
-      // Fast-path: immediate emit from local cache
+      // Fast-path: immediate emit from local cache to prevent UI flash or role loss
       const localDoc = loadUserProfile(fbUser.uid);
-      const fullName = localDoc?.name || fbUser.displayName || fbUser.email?.split('@')[0] || 'Corretor';
-      const nameParts = fullName.trim().split(/\s+/);
-      const firstName = localDoc?.firstName || nameParts[0] || 'Corretor';
-      const lastName = localDoc?.lastName !== undefined ? localDoc.lastName : (nameParts.slice(1).join(' ') || '');
-      const brokerageName = localDoc?.brokerageName || 'Corretora de Seguros';
-      const susep = localDoc?.susep || '';
+      const rawCached = loadCurrentUser();
+      const cachedUser = rawCached?.id === fbUser.uid ? rawCached : null;
+      
+      const rawRole = (localDoc?.role || cachedUser?.role) as string | undefined;
+      let initialRole: 'admin' | 'subadmin' | 'broker' = 'broker';
+      if (rawRole === 'SUB_ADMIN' || rawRole === 'subadmin') {
+        initialRole = 'subadmin';
+      } else if (rawRole === 'CORRETOR' || rawRole === 'broker') {
+        initialRole = 'broker';
+      } else if (rawRole === 'MASTER' || (rawRole === 'ADMIN' && isMasterAdmin({ email: fbUser.email || undefined, id: fbUser.uid })) || isMasterAdmin({ email: fbUser.email || undefined, id: fbUser.uid })) {
+        initialRole = 'admin';
+      }
 
-      const adminFlag = isUserAdmin({
-        id: fbUser.uid,
-        isAdmin: localDoc?.isAdmin,
-        email: fbUser.email || localDoc?.email || ''
-      });
+      const fullName = localDoc?.name || cachedUser?.name || fbUser.displayName || fbUser.email?.split('@')[0] || 'Corretor';
+      const nameParts = fullName.trim().split(/\s+/);
+      const firstName = localDoc?.firstName || cachedUser?.firstName || nameParts[0] || 'Corretor';
+      const lastName = localDoc?.lastName !== undefined ? localDoc.lastName : (cachedUser?.lastName !== undefined ? cachedUser.lastName : (nameParts.slice(1).join(' ') || ''));
+      const corretoraId = localDoc?.corretora_id || localDoc?.brokerageId || cachedUser?.corretora_id || cachedUser?.brokerageId || '';
+      const brokerageName = localDoc?.brokerageName || cachedUser?.brokerageName || 'Corretora de Seguros';
+      const susep = localDoc?.susep || cachedUser?.susep || '';
+      const status = localDoc?.status || cachedUser?.status || 'active';
 
       const appUser: User = {
         id: fbUser.uid,
         name: fullName,
         firstName,
         lastName,
-        email: fbUser.email || localDoc?.email || '',
+        email: fbUser.email || localDoc?.email || cachedUser?.email || '',
         brokerageName,
+        brokerageId: corretoraId,
+        corretora_id: corretoraId,
         susep,
-        isAdmin: adminFlag
+        role: initialRole,
+        isAdmin: initialRole === 'admin' || initialRole === 'subadmin',
+        status
       };
 
       saveUserProfile(appUser);
+      saveCurrentUser(appUser);
       callback(appUser);
 
-      // Background deferred sync
+      // Background deferred sync from Firestore users collection
       fetchUserProfileFromFirestore(fbUser.uid)
         .then((remoteDoc) => {
           if (remoteDoc) {
+            const rawRemoteRole = (remoteDoc as any).role || (remoteDoc as any).userRole;
+            let syncedRole: UserRole = appUser.role || 'broker';
+            
+            if (rawRemoteRole === 'SUB_ADMIN' || rawRemoteRole === 'subadmin') {
+              syncedRole = 'subadmin';
+            } else if (rawRemoteRole === 'CORRETOR' || rawRemoteRole === 'broker') {
+              syncedRole = 'broker';
+            } else if (rawRemoteRole === 'MASTER' || (rawRemoteRole === 'ADMIN' && isMasterAdmin({ email: fbUser.email || undefined, id: fbUser.uid })) || isMasterAdmin({ email: fbUser.email || undefined, id: fbUser.uid })) {
+              syncedRole = 'admin';
+            }
+
+            const syncedCorretoraId = (remoteDoc as any).corretora_id || (remoteDoc as any).brokerageId || appUser.corretora_id;
+            const syncedBrokerageName = remoteDoc.brokerageName || appUser.brokerageName;
+            const syncedName = (remoteDoc as any).nome || remoteDoc.name || appUser.name;
+            const syncedSusep = remoteDoc.susep !== undefined ? remoteDoc.susep : appUser.susep;
+            const syncedStatus = (remoteDoc as any).status === 'inativo' || (remoteDoc as any).status === 'inactive' ? 'inactive' : 'active';
+
             const updatedUser: User = {
               ...appUser,
-              name: remoteDoc.name || appUser.name,
-              firstName: remoteDoc.firstName || appUser.firstName,
-              lastName: remoteDoc.lastName !== undefined ? remoteDoc.lastName : appUser.lastName,
-              brokerageName: remoteDoc.brokerageName || appUser.brokerageName,
-              susep: remoteDoc.susep !== undefined ? remoteDoc.susep : appUser.susep,
-              isAdmin: isUserAdmin({
-                id: fbUser.uid,
-                isAdmin: remoteDoc.isAdmin !== undefined ? remoteDoc.isAdmin : appUser.isAdmin,
-                email: fbUser.email || localDoc?.email || ''
-              })
+              name: syncedName,
+              firstName: remoteDoc.firstName || (syncedName ? syncedName.split(/\s+/)[0] : appUser.firstName),
+              lastName: remoteDoc.lastName !== undefined ? remoteDoc.lastName : (syncedName ? syncedName.split(/\s+/).slice(1).join(' ') : appUser.lastName),
+              email: fbUser.email || appUser.email,
+              brokerageName: syncedBrokerageName,
+              brokerageId: syncedCorretoraId,
+              corretora_id: syncedCorretoraId,
+              susep: syncedSusep,
+              role: syncedRole,
+              isAdmin: syncedRole === 'admin' || syncedRole === 'subadmin',
+              status: syncedStatus
             };
+
             saveUserProfile(updatedUser);
+            saveCurrentUser(updatedUser);
             callback(updatedUser);
           }
         })
         .catch((e) => {
-          console.warn('Deferred remote user sync error in subscriber:', e);
+          console.warn('Deferred remote user sync warning in subscriber (retaining active session):', e);
         });
     } else {
       activeAuthSubscriberUid = null;
+      saveCurrentUser(null);
       callback(null);
     }
   });

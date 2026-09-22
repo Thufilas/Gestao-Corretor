@@ -24,14 +24,19 @@ export const ADMIN_USER_ID = 'bn5feEaSfUUClzVtFD5Q79Cx5112';
 
 /**
  * Check if the user is the Super Admin Master (Global access to all brokerages)
+ * Assigned EXCLUSIVELY to the principal Master Admin (by UID, designated email, or MASTER role).
  */
 export function isMasterAdmin(user?: { id?: string; role?: string; isAdmin?: boolean; email?: string } | null): boolean {
   if (!user) return false;
+  // Sub-Admins and Standard Brokers are strictly forbidden from being Master Admin
+  if (user.role === 'SUB_ADMIN' || user.role === 'subadmin' || user.role === 'CORRETOR' || user.role === 'broker') {
+    return false;
+  }
   if (user.id === ADMIN_USER_ID) return true;
-  if (user.role === 'admin') return true;
   if (user.email && user.email.toLowerCase() === 'admin@gestaocorretor.com.br') return true;
-  // If user has isAdmin set to true and role is NOT explicitly 'subadmin' or 'broker'
-  if (user.isAdmin === true && user.role !== 'subadmin' && user.role !== 'broker') return true;
+  if (user.role === 'MASTER') return true;
+  if (user.role === 'admin' && (user.id === ADMIN_USER_ID || user.email?.toLowerCase() === 'admin@gestaocorretor.com.br')) return true;
+  if (user.isAdmin === true && (user.id === ADMIN_USER_ID || user.email?.toLowerCase() === 'admin@gestaocorretor.com.br')) return true;
   return false;
 }
 
@@ -39,8 +44,9 @@ export function isMasterAdmin(user?: { id?: string; role?: string; isAdmin?: boo
  * Check if the user is a Sub-Admin / Gestor de Corretora (Access filtered to their brokerage only)
  */
 export function isSubAdmin(user?: { role?: string; email?: string } | null): boolean {
-  if (!user) return false;
-  return user.role === 'subadmin';
+  if (!user || !user.role) return false;
+  const r = String(user.role).toUpperCase();
+  return r === 'SUB_ADMIN' || r === 'SUBADMIN' || r === 'GESTOR' || r === 'SUB_ADMINISTRADOR';
 }
 
 /**
@@ -55,6 +61,14 @@ export function canAccessAdminPanel(user?: { id?: string; role?: string; isAdmin
  */
 export function isStandardBroker(user?: { id?: string; role?: string; isAdmin?: boolean; email?: string } | null): boolean {
   return !canAccessAdminPanel(user);
+}
+
+/**
+ * Get the effective Corretora ID for multi-tenant isolation
+ */
+export function getUserCorretoraId(user?: { brokerageId?: string; corretora_id?: string; brokerageName?: string } | null): string {
+  if (!user) return '';
+  return user.corretora_id || user.brokerageId || '';
 }
 
 /**

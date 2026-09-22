@@ -33,7 +33,7 @@ export interface Client {
   updatedAt: string;
 }
 
-export type UserRole = 'admin' | 'subadmin' | 'broker';
+export type UserRole = 'admin' | 'subadmin' | 'broker' | 'MASTER' | 'SUB_ADMIN' | 'CORRETOR';
 
 export interface Brokerage {
   id: string;
@@ -53,9 +53,10 @@ export interface User {
   susep?: string; // Registro SUSEP do Corretor
   brokerageName: string;
   brokerageId?: string; // ID da corretora vinculada
-  role?: UserRole; // 'admin' (Master Global) | 'subadmin' (Gestor de Corretora) | 'broker' (Corretor Padrão)
+  corretora_id?: string; // ID da corretora vinculada (Firestore key)
+  role?: UserRole; // 'admin' / 'MASTER' (Master Global) | 'subadmin' / 'SUB_ADMIN' (Gestor) | 'broker' / 'CORRETOR'
   isAdmin?: boolean;
-  status?: 'active' | 'inactive';
+  status?: 'active' | 'inactive' | 'ativo' | 'inativo';
   createdAt?: string;
   clientCount?: number;
   totalPremiums?: number;

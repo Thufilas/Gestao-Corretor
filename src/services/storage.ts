@@ -349,7 +349,12 @@ export function saveUserProfile(user: User): void {
             lastName: user.lastName,
             email: user.email,
             brokerageName: user.brokerageName,
-            susep: user.susep
+            brokerageId: user.corretora_id || user.brokerageId || brokers[index].brokerageId,
+            corretora_id: user.corretora_id || user.brokerageId || brokers[index].brokerageId,
+            role: user.role || brokers[index].role,
+            isAdmin: user.isAdmin !== undefined ? user.isAdmin : brokers[index].isAdmin,
+            susep: user.susep,
+            status: user.status || brokers[index].status
           };
           localStorage.setItem('gestao_corretor_registered_brokers_v1', JSON.stringify(brokers));
         }

@@ -1,6 +1,6 @@
 import { User, BrokerAccount, Brokerage, Client, UserRole } from '../types';
 import { ADMIN_USER_ID, isSubAdmin } from '../utils/insuranceUtils';
-import { loadClients } from './storage';
+import { loadClients, saveUserProfile, loadCurrentUser, saveCurrentUser } from './storage';
 import { 
   firebaseCreateUserByAdmin, 
   isFirebaseConfigured, 
@@ -57,7 +57,8 @@ export const INITIAL_BROKERS: BrokerAccount[] = [
     susep: '00.000001/2024',
     brokerageName: 'GestãoCorretor Central',
     brokerageId: 'corretora-central',
-    role: 'admin',
+    corretora_id: 'corretora-central',
+    role: 'MASTER' as any,
     isAdmin: true,
     status: 'active',
     clientCount: 14,
@@ -73,7 +74,8 @@ export const INITIAL_BROKERS: BrokerAccount[] = [
     susep: '20.554102/2023',
     brokerageName: 'Finage Corretora de Seguros',
     brokerageId: 'corretora-finage',
-    role: 'subadmin',
+    corretora_id: 'corretora-finage',
+    role: 'SUB_ADMIN' as any,
     isAdmin: true,
     status: 'active',
     clientCount: 9,
@@ -89,7 +91,8 @@ export const INITIAL_BROKERS: BrokerAccount[] = [
     susep: '21.884192/2024',
     brokerageName: 'Finage Corretora de Seguros',
     brokerageId: 'corretora-finage',
-    role: 'broker',
+    corretora_id: 'corretora-finage',
+    role: 'CORRETOR' as any,
     isAdmin: false,
     status: 'active',
     clientCount: 5,
@@ -105,7 +108,8 @@ export const INITIAL_BROKERS: BrokerAccount[] = [
     susep: '10.203948/2024',
     brokerageName: 'Silva Corretora de Seguros',
     brokerageId: 'corretora-silva',
-    role: 'subadmin',
+    corretora_id: 'corretora-silva',
+    role: 'SUB_ADMIN' as any,
     isAdmin: true,
     status: 'active',
     clientCount: 4,
@@ -121,7 +125,8 @@ export const INITIAL_BROKERS: BrokerAccount[] = [
     susep: '12.984712/2023',
     brokerageName: 'Silva Corretora de Seguros',
     brokerageId: 'corretora-silva',
-    role: 'broker',
+    corretora_id: 'corretora-silva',
+    role: 'CORRETOR' as any,
     isAdmin: false,
     status: 'active',
     clientCount: 6,
@@ -137,7 +142,8 @@ export const INITIAL_BROKERS: BrokerAccount[] = [
     susep: '18.309182/2024',
     brokerageName: 'Sampaio Prime Seguros',
     brokerageId: 'corretora-sampaio',
-    role: 'subadmin',
+    corretora_id: 'corretora-sampaio',
+    role: 'SUB_ADMIN' as any,
     isAdmin: true,
     status: 'active',
     clientCount: 8,
@@ -153,7 +159,8 @@ export const INITIAL_BROKERS: BrokerAccount[] = [
     susep: '15.441092/2022',
     brokerageName: 'Guimarães Proteção & Vida',
     brokerageId: 'corretora-guimaraes',
-    role: 'broker',
+    corretora_id: 'corretora-guimaraes',
+    role: 'CORRETOR' as any,
     isAdmin: false,
     status: 'inactive',
     clientCount: 2,
@@ -168,9 +175,6 @@ export function getBrokerageIdFromName(name?: string): string {
   return `corretora-${clean}`;
 }
 
-/**
- * Load all registered brokerages
- */
 export function loadAllBrokerages(): Brokerage[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_BROKERAGES);
@@ -183,7 +187,6 @@ export function loadAllBrokerages(): Brokerage[] {
       brokerages = JSON.parse(raw);
     }
 
-    // Ensure initial brokerages exist
     INITIAL_BROKERAGES.forEach(init => {
       if (!brokerages.some(b => b.id === init.id || b.name.toLowerCase() === init.name.toLowerCase())) {
         brokerages.push(init);
@@ -197,9 +200,6 @@ export function loadAllBrokerages(): Brokerage[] {
   }
 }
 
-/**
- * Save all registered brokerages
- */
 export function saveAllBrokerages(brokerages: Brokerage[]): void {
   try {
     localStorage.setItem(STORAGE_KEY_BROKERAGES, JSON.stringify(brokerages));
@@ -208,9 +208,6 @@ export function saveAllBrokerages(brokerages: Brokerage[]): void {
   }
 }
 
-/**
- * Register a new brokerage
- */
 export function createBrokerage(
   name: string, 
   subAdminId?: string, 
@@ -237,9 +234,6 @@ export function createBrokerage(
   return created;
 }
 
-/**
- * Load all registered brokers from localStorage / repository
- */
 export function loadAllBrokers(): BrokerAccount[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_REGISTERED_BROKERS);
@@ -252,14 +246,12 @@ export function loadAllBrokers(): BrokerAccount[] {
       brokers = JSON.parse(raw);
     }
 
-    // Ensure initial key users (Admin Master, Alberto, etc.) are always present
     INITIAL_BROKERS.forEach(initBroker => {
       if (!brokers.some(b => b.id === initBroker.id || b.email.toLowerCase() === initBroker.email.toLowerCase())) {
         brokers.push(initBroker);
       }
     });
 
-    // Refresh real client counts and ensure role / brokerageId fields exist
     return brokers.map(b => {
       const userClients: Client[] = loadClients(b.id);
       const actualCount = userClients.length > 0 ? userClients.length : (b.clientCount || 0);
@@ -267,16 +259,19 @@ export function loadAllBrokers(): BrokerAccount[] {
         ? userClients.reduce((acc, curr) => acc + (curr.totalInsuredValue || 0), 0)
         : (b.totalPremiums || 0);
 
-      let role: UserRole = b.role || 'broker';
-      if (b.id === ADMIN_USER_ID || b.email.toLowerCase() === 'admin@gestaocorretor.com.br') {
-        role = 'admin';
-      } else if (b.email.toLowerCase() === 'alberto@finage.com.br' || b.email.toLowerCase() === 'corretor@gestaocorretor.com.br' || b.email.toLowerCase() === 'patricia.mendes@sampaioseguros.com.br') {
-        role = 'subadmin';
+      // Padronização e normalização da Role
+      const rawRole = String(b.role || '').toUpperCase();
+      let role: UserRole = 'CORRETOR' as any;
+
+      if (b.id === ADMIN_USER_ID || rawRole === 'MASTER' || rawRole === 'ADMIN') {
+        role = 'MASTER' as any;
+      } else if (rawRole === 'SUB_ADMIN' || rawRole === 'SUBADMIN' || rawRole === 'GESTOR') {
+        role = 'SUB_ADMIN' as any;
       }
 
-      let brokerageId = b.brokerageId;
+      let brokerageId = b.brokerageId || b.corretora_id;
       if (!brokerageId) {
-        if (role === 'admin') brokerageId = 'corretora-central';
+        if (role === ('MASTER' as any)) brokerageId = 'corretora-central';
         else if (b.brokerageName?.toLowerCase().includes('finage')) brokerageId = 'corretora-finage';
         else if (b.brokerageName?.toLowerCase().includes('silva')) brokerageId = 'corretora-silva';
         else if (b.brokerageName?.toLowerCase().includes('sampaio')) brokerageId = 'corretora-sampaio';
@@ -287,7 +282,8 @@ export function loadAllBrokers(): BrokerAccount[] {
         ...b,
         role,
         brokerageId,
-        isAdmin: role === 'admin' || role === 'subadmin',
+        corretora_id: brokerageId,
+        isAdmin: String(role) === 'MASTER' || String(role) === 'SUB_ADMIN',
         clientCount: actualCount,
         totalPremiums: actualPremiums
       };
@@ -298,9 +294,6 @@ export function loadAllBrokers(): BrokerAccount[] {
   }
 }
 
-/**
- * Save all registered brokers
- */
 export function saveAllBrokers(brokers: BrokerAccount[]): void {
   try {
     localStorage.setItem(STORAGE_KEY_REGISTERED_BROKERS, JSON.stringify(brokers));
@@ -309,11 +302,6 @@ export function saveAllBrokers(brokers: BrokerAccount[]): void {
   }
 }
 
-/**
- * Register a new broker account by administrator or sub-admin.
- * When Firebase is configured, registers directly into Firebase Authentication
- * without disconnecting the administrator and persists profile to Firestore.
- */
 export async function createBrokerAccount(params: {
   firstName: string;
   lastName: string;
@@ -330,24 +318,24 @@ export async function createBrokerAccount(params: {
 
   const isCreatorSub = isSubAdmin(params.creatorUser);
 
-  // Security enforcement:
-  // Sub-Admins can ONLY create standard brokers ('broker') for their OWN brokerage
-  let effectiveRole: UserRole = 'broker';
+  let effectiveRole: UserRole = 'CORRETOR' as any;
+  const requestedRole = String(params.role || '').toUpperCase();
+
   if (isCreatorSub) {
-    effectiveRole = 'broker';
-  } else if (params.role) {
-    effectiveRole = params.role;
+    effectiveRole = 'CORRETOR' as any;
+  } else if (requestedRole === 'SUB_ADMIN' || requestedRole === 'SUBADMIN' || requestedRole === 'GESTOR') {
+    effectiveRole = 'SUB_ADMIN' as any;
+  } else {
+    effectiveRole = 'CORRETOR' as any;
   }
 
   let effectiveBrokerageName = '';
   let effectiveBrokerageId = '';
 
   if (isCreatorSub && params.creatorUser) {
-    // Strictly lock to Sub-Admin's company
     effectiveBrokerageName = params.creatorUser.brokerageName || 'Minha Corretora';
-    effectiveBrokerageId = params.creatorUser.brokerageId || getBrokerageIdFromName(effectiveBrokerageName);
+    effectiveBrokerageId = params.creatorUser.brokerageId || params.creatorUser.corretora_id || getBrokerageIdFromName(effectiveBrokerageName);
   } else {
-    // Admin Master can assign to any existing brokerage or create a new one
     if (params.brokerageId) {
       const found = brokerages.find(b => b.id === params.brokerageId);
       if (found) {
@@ -378,7 +366,6 @@ export async function createBrokerAccount(params: {
   const fullName = [params.firstName.trim(), params.lastName.trim()].filter(Boolean).join(' ');
   let newId = `usr-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
 
-  // If Firebase is active and password provided, create account in Firebase Authentication
   if (isFirebaseConfigured() && params.initialPassword) {
     const fbResult = await firebaseCreateUserByAdmin({
       email: params.email.trim(),
@@ -402,8 +389,9 @@ export async function createBrokerAccount(params: {
     email: params.email.trim(),
     brokerageName: effectiveBrokerageName,
     brokerageId: effectiveBrokerageId,
+    corretora_id: effectiveBrokerageId,
     role: effectiveRole,
-    isAdmin: effectiveRole === 'admin' || effectiveRole === 'subadmin',
+    isAdmin: String(effectiveRole) === 'SUB_ADMIN',
     susep: params.susep?.trim() || '',
     status: 'active',
     clientCount: 0,
@@ -411,8 +399,7 @@ export async function createBrokerAccount(params: {
     createdAt: new Date().toISOString()
   };
 
-  // If new user is a Sub-Admin, link them as responsible for the brokerage
-  if (effectiveRole === 'subadmin') {
+  if (String(effectiveRole) === 'SUB_ADMIN') {
     const updatedBrokerages = loadAllBrokerages().map(br => {
       if (br.id === effectiveBrokerageId || br.name.toLowerCase() === effectiveBrokerageName.toLowerCase()) {
         return {
@@ -427,7 +414,6 @@ export async function createBrokerAccount(params: {
     saveAllBrokerages(updatedBrokerages);
   }
 
-  // Add created broker to the beginning of the list, replacing any duplicate email/id
   const updatedList = [
     created, 
     ...brokers.filter(b => b.id !== created.id && b.email.toLowerCase() !== created.email.toLowerCase())
@@ -436,9 +422,6 @@ export async function createBrokerAccount(params: {
   return created;
 }
 
-/**
- * Update an existing broker's details
- */
 export function updateBrokerAccount(
   brokerId: string, 
   data: Partial<Pick<BrokerAccount, 'name' | 'firstName' | 'lastName' | 'email' | 'brokerageName' | 'brokerageId' | 'role' | 'susep' | 'status'>>,
@@ -449,7 +432,6 @@ export function updateBrokerAccount(
 
   const updatedList = brokers.map(b => {
     if (b.id === brokerId) {
-      // If editor is sub-admin, forbid changing role or brokerage
       const safeData = { ...data };
       if (isEditorSub) {
         delete safeData.role;
@@ -457,20 +439,39 @@ export function updateBrokerAccount(
         delete safeData.brokerageName;
       }
 
+      let finalRole: UserRole = b.role;
+      const requestedRole = String(safeData.role || b.role || '').toUpperCase();
+
+      if (b.id === ADMIN_USER_ID) {
+        finalRole = 'MASTER' as any;
+      } else if (safeData.role) {
+        if (requestedRole === 'MASTER' || requestedRole === 'ADMIN') {
+          finalRole = 'SUB_ADMIN' as any;
+        } else if (requestedRole === 'SUB_ADMIN' || requestedRole === 'SUBADMIN' || requestedRole === 'GESTOR') {
+          finalRole = 'SUB_ADMIN' as any;
+        } else {
+          finalRole = 'CORRETOR' as any;
+        }
+      }
+
+      const activeBrokerageId = safeData.brokerageId || b.brokerageId || b.corretora_id;
+
       const updated: BrokerAccount = { 
         ...b, 
         ...safeData,
-        role: safeData.role || b.role,
-        brokerageId: safeData.brokerageId || b.brokerageId,
-        isAdmin: (safeData.role || b.role) === 'admin' || (safeData.role || b.role) === 'subadmin'
+        role: finalRole,
+        brokerageId: activeBrokerageId,
+        corretora_id: activeBrokerageId,
+        brokerageName: safeData.brokerageName || b.brokerageName,
+        isAdmin: String(finalRole) === 'MASTER' || String(finalRole) === 'SUB_ADMIN'
       };
 
       if (safeData.firstName || safeData.lastName) {
         updated.name = [safeData.firstName || b.firstName, safeData.lastName || b.lastName].filter(Boolean).join(' ');
       }
 
-      // If user was promoted to Sub-Admin, update the brokerage
-      if (safeData.role === 'subadmin' && updated.brokerageId) {
+      // Gestão do vínculo da corretora
+      if (String(finalRole) === 'SUB_ADMIN' && updated.brokerageId) {
         const brokerages = loadAllBrokerages().map(br => {
           if (br.id === updated.brokerageId) {
             return {
@@ -480,13 +481,57 @@ export function updateBrokerAccount(
               subAdminEmail: updated.email
             };
           }
+          if (br.subAdminId === updated.id && br.id !== updated.brokerageId) {
+            return {
+              ...br,
+              subAdminId: undefined,
+              subAdminName: undefined,
+              subAdminEmail: undefined
+            };
+          }
+          return br;
+        });
+        saveAllBrokerages(brokerages);
+      } else if (String(finalRole) === 'CORRETOR') {
+        const brokerages = loadAllBrokerages().map(br => {
+          if (br.subAdminId === updated.id) {
+            return {
+              ...br,
+              subAdminId: undefined,
+              subAdminName: undefined,
+              subAdminEmail: undefined
+            };
+          }
           return br;
         });
         saveAllBrokerages(brokerages);
       }
 
+      // Payload para persistência local e Firestore com suporte a ambos os campos
+      const userPayload: User = {
+        id: updated.id,
+        name: updated.name,
+        firstName: updated.firstName,
+        lastName: updated.lastName,
+        email: updated.email,
+        brokerageName: updated.brokerageName,
+        brokerageId: updated.brokerageId,
+        corretora_id: updated.brokerageId,
+        role: updated.role,
+        isAdmin: updated.isAdmin,
+        susep: updated.susep,
+        status: updated.status
+      };
+
+      saveUserProfile(userPayload);
+
+      const currentUser = loadCurrentUser();
+      if (currentUser && currentUser.id === brokerId) {
+        saveCurrentUser(userPayload);
+      }
+
       if (isFirebaseConfigured()) {
-        saveUserProfileToFirestore(brokerId, updated).catch(err => 
+        saveUserProfileToFirestore(brokerId, userPayload).catch(err => 
           console.warn('Could not sync updated broker to Firestore:', err)
         );
       }
@@ -500,16 +545,11 @@ export function updateBrokerAccount(
   return updatedList;
 }
 
-/**
- * Toggle broker account active/blocked status
- */
 export function toggleBrokerStatus(brokerId: string, editorUser?: User | null): BrokerAccount[] {
   const brokers = loadAllBrokers();
   const updatedList = brokers.map(b => {
     if (b.id === brokerId) {
-      // Admin master cannot be deactivated
       if (b.id === ADMIN_USER_ID) return b;
-      // Sub-admin cannot deactivate themselves
       if (editorUser && b.id === editorUser.id) return b;
 
       return {
@@ -524,9 +564,6 @@ export function toggleBrokerStatus(brokerId: string, editorUser?: User | null): 
   return updatedList;
 }
 
-/**
- * Calculate metrics across brokers (supports global or filtered team)
- */
 export function getAdminMetrics(brokers: BrokerAccount[]) {
   const totalBrokers = brokers.length;
   const activeBrokers = brokers.filter(b => b.status === 'active').length;

@@ -115,7 +115,7 @@ export const CreateBrokerModal: React.FC<CreateBrokerModalProps> = ({
     let finalBrokerageName = '';
 
     if (isSub && currentUser) {
-      finalBrokerageId = currentUser.brokerageId || selectedBrokerageId;
+      finalBrokerageId = currentUser.corretora_id || currentUser.brokerageId || selectedBrokerageId;
       finalBrokerageName = currentUser.brokerageName;
     } else {
       if (isCreatingNewBrokerage) {
