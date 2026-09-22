@@ -25,7 +25,6 @@ import {
 } from 'lucide-react';
 import { Client, ClientType, PolicyDocument } from '../types';
 import { 
-  POPULAR_INSURERS, 
   formatCurrency, 
   maskPhone,
   validateBirthDate,
@@ -34,7 +33,7 @@ import {
   getMinBirthDateString,
   BIRTH_DATE_ERROR_MESSAGE
 } from '../utils/insuranceUtils';
-import { saveDocumentFile } from '../services/storage';
+import { saveDocumentFile, loadRegisteredInsurers, addRegisteredInsurer } from '../services/storage';
 import { 
   isFirebaseConfigured, 
   uploadPolicyToFirebaseStorage, 
@@ -66,8 +65,8 @@ export const ClientModal: React.FC<ClientModalProps> = ({
   const [birthDate, setBirthDate] = useState('');
   const [birthDateError, setBirthDateError] = useState<string | null>(null);
   const [calculatedAge, setCalculatedAge] = useState<number | null>(null);
-  const [insuranceCompany, setInsuranceCompany] = useState('Porto Seguro');
-  const [customInsurer, setCustomInsurer] = useState('');
+  const [insuranceCompany, setInsuranceCompany] = useState('');
+  const [registeredInsurers, setRegisteredInsurers] = useState<string[]>([]);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [phone, setPhone] = useState('');
@@ -75,7 +74,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({
   const [licensePlate, setLicensePlate] = useState('');
   const [totalInsuredValue, setTotalInsuredValue] = useState<number>(0);
   const [commissionRate, setCommissionRate] = useState<number>(18);
-  const [clientType, setClientType] = useState<ClientType>('Renovação');
+  const [clientType, setClientType] = useState<ClientType>('Novo');
   const [notes, setNotes] = useState('');
   const [document, setDocument] = useState<PolicyDocument | undefined>(undefined);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -99,9 +98,12 @@ export const ClientModal: React.FC<ClientModalProps> = ({
 
   // Check if current birthDate is valid
   const isBirthDateValid = birthDate.trim().length > 0 && !birthDateError && validateBirthDate(birthDate).isValid;
-  const isFormValid = name.trim().length > 0 && isBirthDateValid && !isUploading;
+  const isFormValid = name.trim().length > 0 && isBirthDateValid && insuranceCompany.trim().length > 0 && !isUploading;
 
   useEffect(() => {
+    const list = loadRegisteredInsurers(currentUserId);
+    setRegisteredInsurers(list);
+
     if (clientToEdit) {
       setName(clientToEdit.name);
       setBirthDate(clientToEdit.birthDate || '');
@@ -120,14 +122,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({
         setCalculatedAge(null);
       }
       
-      if (POPULAR_INSURERS.includes(clientToEdit.insuranceCompany)) {
-        setInsuranceCompany(clientToEdit.insuranceCompany);
-        setCustomInsurer('');
-      } else {
-        setInsuranceCompany('Outra Seguradora');
-        setCustomInsurer(clientToEdit.insuranceCompany);
-      }
-
+      setInsuranceCompany(clientToEdit.insuranceCompany || '');
       setStartDate(clientToEdit.startDate);
       setEndDate(clientToEdit.endDate);
       setPhone(clientToEdit.phone);
@@ -145,28 +140,25 @@ export const ClientModal: React.FC<ClientModalProps> = ({
       nextYear.setFullYear(nextYear.getFullYear() + 1);
       const oneYearLater = nextYear.toISOString().split('T')[0];
 
-      const defaultBirthDate = '1990-01-01';
       setName('');
-      setBirthDate(defaultBirthDate);
-      const initialValidation = validateBirthDate(defaultBirthDate);
+      setBirthDate('');
       setBirthDateError(null);
-      setCalculatedAge(initialValidation.age ?? null);
+      setCalculatedAge(null);
 
-      setInsuranceCompany('Porto Seguro');
-      setCustomInsurer('');
+      setInsuranceCompany('');
       setStartDate(today);
       setEndDate(oneYearLater);
       setPhone('');
       setVehicleModel('');
       setLicensePlate('');
-      setTotalInsuredValue(3500);
+      setTotalInsuredValue(0);
       setCommissionRate(18);
       setClientType('Novo');
       setNotes('');
       setDocument(undefined);
     }
     setUploadError(null);
-  }, [clientToEdit, isOpen]);
+  }, [clientToEdit, isOpen, currentUserId]);
 
   // Handle immediate birth date change & validation
   const handleBirthDateChange = (val: string) => {
@@ -346,9 +338,11 @@ export const ClientModal: React.FC<ClientModalProps> = ({
       return;
     }
 
-    const finalInsurer = insuranceCompany === 'Outra Seguradora' 
-      ? (customInsurer.trim() || 'Outra Seguradora')
-      : insuranceCompany;
+    const finalInsurer = insuranceCompany.trim();
+    if (!finalInsurer) {
+      alert('Por favor, selecione a Seguradora.');
+      return;
+    }
 
     const updatedClient: Client = {
       id: clientToEdit ? clientToEdit.id : `cli-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
@@ -521,30 +515,60 @@ export const ClientModal: React.FC<ClientModalProps> = ({
             </h3>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              {/* Seguradora Dropdown */}
+              {/* Seguradora Field */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Nome da Seguradora *
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Building2 className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                    Nome da Seguradora *
+                  </span>
+                  {registeredInsurers.length > 0 && (
+                    <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-medium">
+                      {registeredInsurers.length} seguradoras
+                    </span>
+                  )}
                 </label>
+
                 <select
-                  value={insuranceCompany}
+                  id="select-insurance-company"
+                  required
+                  value={insuranceCompany || ''}
                   onChange={(e) => setInsuranceCompany(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-slate-900 dark:text-white"
+                  className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-slate-900 dark:text-white font-medium cursor-pointer"
                 >
-                  {POPULAR_INSURERS.map((ins) => (
-                    <option key={ins} value={ins}>{ins}</option>
+                  <option value="">Selecione uma seguradora...</option>
+                  
+                  {/* If editing a client with custom or legacy insurer not in list, keep it as an option */}
+                  {insuranceCompany && !registeredInsurers.some(i => i.toLowerCase() === insuranceCompany.toLowerCase()) && (
+                    <option value={insuranceCompany}>{insuranceCompany} (Cadastrada anteriormente)</option>
+                  )}
+
+                  {registeredInsurers.map((ins) => (
+                    <option key={ins} value={ins}>
+                      {ins}
+                    </option>
                   ))}
                 </select>
 
-                {insuranceCompany === 'Outra Seguradora' && (
-                  <input
-                    type="text"
-                    required
-                    placeholder="Digite o nome da Seguradora"
-                    value={customInsurer}
-                    onChange={(e) => setCustomInsurer(e.target.value)}
-                    className="mt-2 w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800/80 border border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-slate-900 dark:text-white"
-                  />
+                {/* Quick Selection Buttons */}
+                {registeredInsurers.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1 items-center">
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500">Atalhos:</span>
+                    {registeredInsurers.slice(0, 4).map((ins) => (
+                      <button
+                        key={ins}
+                        type="button"
+                        onClick={() => setInsuranceCompany(ins)}
+                        className={`text-[10px] px-2 py-0.5 rounded-md border transition-all cursor-pointer ${
+                          insuranceCompany.toLowerCase() === ins.toLowerCase()
+                            ? 'bg-cyan-600 text-white border-cyan-600 font-bold shadow-xs'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-cyan-400'
+                        }`}
+                      >
+                        {ins}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
 

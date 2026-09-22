@@ -1,67 +1,10 @@
 import { Client, AlertLevel, ExpiryAlertItem, BirthdayItem } from '../types';
 
-export const POPULAR_INSURERS = [
-  'Porto Seguro',
-  'Allianz Seguros',
-  'Bradesco Seguros',
-  'Tokio Marine',
-  'Azul Seguros',
-  'HDI Seguros',
-  'Mapfre',
-  'Zurich Seguros',
-  'Liberty Seguros',
-  'Sompo Seguros',
-  'Suhai Seguradora',
-  'Youse Seguros',
-  'Alfa Seguradora',
-  'Outra Seguradora'
-];
-
-/**
- * Super Admin Master User ID
- */
 export const ADMIN_USER_ID = 'bn5feEaSfUUClzVtFD5Q79Cx5112';
 
-/**
- * Check if the user is the Super Admin Master (Global access to all brokerages)
- * Assigned EXCLUSIVELY to the principal Master Admin (by UID, designated email, or MASTER role).
- */
-export function isMasterAdmin(user?: { id?: string; role?: string; isAdmin?: boolean; email?: string } | null): boolean {
-  if (!user) return false;
-  // Sub-Admins and Standard Brokers are strictly forbidden from being Master Admin
-  if (user.role === 'SUB_ADMIN' || user.role === 'subadmin' || user.role === 'CORRETOR' || user.role === 'broker') {
-    return false;
-  }
-  if (user.id === ADMIN_USER_ID) return true;
-  if (user.email && user.email.toLowerCase() === 'admin@gestaocorretor.com.br') return true;
-  if (user.role === 'MASTER') return true;
-  if (user.role === 'admin' && (user.id === ADMIN_USER_ID || user.email?.toLowerCase() === 'admin@gestaocorretor.com.br')) return true;
-  if (user.isAdmin === true && (user.id === ADMIN_USER_ID || user.email?.toLowerCase() === 'admin@gestaocorretor.com.br')) return true;
-  return false;
-}
+export const POPULAR_INSURERS: string[] = [];
 
-/**
- * Check if the user is a Sub-Admin / Gestor de Corretora (Access filtered to their brokerage only)
- */
-export function isSubAdmin(user?: { role?: string; email?: string } | null): boolean {
-  if (!user || !user.role) return false;
-  const r = String(user.role).toUpperCase();
-  return r === 'SUB_ADMIN' || r === 'SUBADMIN' || r === 'GESTOR' || r === 'SUB_ADMINISTRADOR';
-}
-
-/**
- * Check if the user has permission to access the Admin Panel (Master Admin OR Sub-Admin)
- */
-export function canAccessAdminPanel(user?: { id?: string; role?: string; isAdmin?: boolean; email?: string } | null): boolean {
-  return isMasterAdmin(user) || isSubAdmin(user);
-}
-
-/**
- * Check if the user is a standard broker (No access to Admin Panel)
- */
-export function isStandardBroker(user?: { id?: string; role?: string; isAdmin?: boolean; email?: string } | null): boolean {
-  return !canAccessAdminPanel(user);
-}
+export const BIRTH_DATE_ERROR_MESSAGE = 'Data de nascimento inválida ou menor de 18 anos.';
 
 /**
  * Get the effective Corretora ID for multi-tenant isolation
@@ -72,9 +15,65 @@ export function getUserCorretoraId(user?: { brokerageId?: string; corretora_id?:
 }
 
 /**
+ * Check if the user is the Super Admin Master (Global access to all brokerages)
+ * Assigned EXCLUSIVELY to the principal Master Admin.
+ */
+export function isMasterAdmin(user?: any): boolean {
+  if (!user) return false;
+  
+  const roleUpper = String(user.role || '').toUpperCase();
+  if (roleUpper === 'CORRETOR' || roleUpper === 'BROKER') {
+    return false;
+  }
+
+  if (user.id === ADMIN_USER_ID) return true;
+  if (user.email && user.email.toLowerCase() === 'admin@gestaocorretor.com.br') return true;
+  if (roleUpper === 'MASTER' || roleUpper === 'ADMIN_MASTER') return true;
+  if (user.isAdmin === true && (roleUpper === 'ADMIN' || user.id === ADMIN_USER_ID || user.email?.toLowerCase() === 'admin@gestaocorretor.com.br')) return true;
+  
+  return false;
+}
+
+/**
+ * Check if the user is a Sub-Admin / Gestor de Corretora
+ */
+export function isSubAdmin(user?: any): boolean {
+  if (!user) return false;
+
+  if (user.isSubAdmin === true) return true;
+
+  const r = String(user.role || '').toUpperCase();
+
+  return (
+    r === 'SUB_ADMIN' || 
+    r === 'SUBADMIN' || 
+    r === 'GESTOR' || 
+    r === 'SUB_ADMINISTRADOR' ||
+    r === 'MASTER' ||
+    r === 'ADMIN' ||
+    user.id === ADMIN_USER_ID
+  );
+}
+
+/**
+ * Check if the user has permission to access the Admin Panel (Master Admin OR Sub-Admin)
+ */
+export function canAccessAdminPanel(user?: any): boolean {
+  if (!user) return false;
+  return isMasterAdmin(user) || isSubAdmin(user) || user.isAdmin === true;
+}
+
+/**
+ * Check if the user is a standard broker (No access to Admin Panel)
+ */
+export function isStandardBroker(user?: any): boolean {
+  return !canAccessAdminPanel(user);
+}
+
+/**
  * Check if the user is an admin or sub-admin (backwards compatibility)
  */
-export function isUserAdmin(user?: { id?: string; isAdmin?: boolean; role?: string; email?: string } | null): boolean {
+export function isUserAdmin(user?: any): boolean {
   if (!user) return false;
   return canAccessAdminPanel(user);
 }
@@ -181,7 +180,6 @@ export function getExpiryAlerts(clients: Client[]): ExpiryAlertItem[] {
     const days = getDaysRemaining(client.endDate);
     const alertLevel = getExpiryAlertLevel(days);
 
-    // Consider all that are <= 30 days or already expired
     if (days <= 30) {
       alerts.push({
         client,
@@ -192,7 +190,6 @@ export function getExpiryAlerts(clients: Client[]): ExpiryAlertItem[] {
     }
   }
 
-  // Sort: lowest days first (expired & critical first)
   return alerts.sort((a, b) => a.daysRemaining - b.daysRemaining);
 }
 
@@ -218,11 +215,9 @@ export function getAllClientBirthdays(clients: Client[]): BirthdayItem[] {
 
     if (isNaN(birthMonth) || isNaN(birthDay)) continue;
 
-    // Birthday in current year
     let nextBday = new Date(currentYear, birthMonth - 1, birthDay);
     nextBday.setHours(0, 0, 0, 0);
 
-    // If already passed this year, next celebration is next year
     if (nextBday < today) {
       nextBday = new Date(currentYear + 1, birthMonth - 1, birthDay);
     }
@@ -241,7 +236,6 @@ export function getAllClientBirthdays(clients: Client[]): BirthdayItem[] {
     });
   }
 
-  // Sort: closest birthdays first
   return items.sort((a, b) => a.daysUntilBirthday - b.daysUntilBirthday);
 }
 
@@ -327,189 +321,7 @@ Aproveite muito o seu dia! Parabéns!`;
 }
 
 /**
- * Message standard for birth date validation errors
- */
-export const BIRTH_DATE_ERROR_MESSAGE = 'A data de nascimento deve corresponder a uma idade entre 16 e 130 anos e não pode ser uma data futura.';
-
-/**
- * Returns today's date formatted as YYYY-MM-DD in local time
- */
-export function getTodayDateString(): string {
-  const d = new Date();
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-/**
- * Returns the maximum allowed birth date (exact 16 years ago from today)
- */
-export function getMaxBirthDateString(minAge = 16): string {
-  const d = new Date();
-  const year = d.getFullYear() - minAge;
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-/**
- * Returns the minimum allowed birth date (exact 130 years ago from today)
- */
-export function getMinBirthDateString(maxAge = 130): string {
-  const d = new Date();
-  const year = d.getFullYear() - maxAge;
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-/**
- * Calculates exact age in years considering day, month, and year of birth relative to current/reference date
- */
-export function calculateExactAge(birthDateStr: string, referenceDate: Date = new Date()): number | null {
-  if (!birthDateStr || !birthDateStr.trim()) return null;
-
-  let year: number;
-  let month: number;
-  let day: number;
-
-  const trimmed = birthDateStr.trim();
-  if (trimmed.includes('-')) {
-    const parts = trimmed.split('-').map(Number);
-    if (parts.length !== 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) return null;
-    year = parts[0];
-    month = parts[1];
-    day = parts[2];
-  } else if (trimmed.includes('/')) {
-    const parts = trimmed.split('/').map(Number);
-    if (parts.length !== 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) return null;
-    day = parts[0];
-    month = parts[1];
-    year = parts[2];
-    if (year < 100) year += 2000;
-  } else {
-    return null;
-  }
-
-  // Calendar validity check
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  const parsedDate = new Date(year, month - 1, day);
-  if (
-    parsedDate.getFullYear() !== year ||
-    parsedDate.getMonth() !== month - 1 ||
-    parsedDate.getDate() !== day
-  ) {
-    return null;
-  }
-
-  const refYear = referenceDate.getFullYear();
-  const refMonth = referenceDate.getMonth() + 1;
-  const refDay = referenceDate.getDate();
-
-  let age = refYear - year;
-  if (refMonth < month || (refMonth === month && refDay < day)) {
-    age--;
-  }
-
-  return age;
-}
-
-/**
- * Strict validation of client birth date with exact age calculation
- * Rules:
- * 1. Future date: cannot be greater than today
- * 2. Minimum age: at least 16 full years completed today
- * 3. Maximum age: cannot be older than 130 years
- */
-export function validateBirthDate(
-  dateStr: string,
-  referenceDate: Date = new Date()
-): { isValid: boolean; error?: string; age?: number } {
-  if (!dateStr || !dateStr.trim()) {
-    return { 
-      isValid: false, 
-      error: 'A data de aniversário é obrigatória.' 
-    };
-  }
-
-  const ref = new Date(referenceDate);
-  ref.setHours(0, 0, 0, 0);
-
-  let year: number, month: number, day: number;
-  const trimmed = dateStr.trim();
-  if (trimmed.includes('-')) {
-    const parts = trimmed.split('-').map(Number);
-    if (parts.length !== 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) {
-      return { isValid: false, error: BIRTH_DATE_ERROR_MESSAGE };
-    }
-    year = parts[0];
-    month = parts[1];
-    day = parts[2];
-  } else if (trimmed.includes('/')) {
-    const parts = trimmed.split('/').map(Number);
-    if (parts.length !== 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) {
-      return { isValid: false, error: BIRTH_DATE_ERROR_MESSAGE };
-    }
-    day = parts[0];
-    month = parts[1];
-    year = parts[2];
-    if (year < 100) year += 2000;
-  } else {
-    return { isValid: false, error: BIRTH_DATE_ERROR_MESSAGE };
-  }
-
-  if (month < 1 || month > 12 || day < 1 || day > 31) {
-    return { isValid: false, error: BIRTH_DATE_ERROR_MESSAGE };
-  }
-
-  const birthDate = new Date(year, month - 1, day);
-  birthDate.setHours(0, 0, 0, 0);
-
-  if (
-    birthDate.getFullYear() !== year ||
-    birthDate.getMonth() !== month - 1 ||
-    birthDate.getDate() !== day
-  ) {
-    return { isValid: false, error: BIRTH_DATE_ERROR_MESSAGE };
-  }
-
-  // 1. Data Futura: cannot be after today
-  if (birthDate.getTime() > ref.getTime()) {
-    return {
-      isValid: false,
-      error: BIRTH_DATE_ERROR_MESSAGE
-    };
-  }
-
-  // 2. Precise Age Calculation
-  const age = calculateExactAge(dateStr, ref);
-  if (age === null) {
-    return {
-      isValid: false,
-      error: BIRTH_DATE_ERROR_MESSAGE
-    };
-  }
-
-  // 3. Minimum Age (16) & Maximum Age (130)
-  if (age < 16 || age > 130) {
-    return {
-      isValid: false,
-      error: BIRTH_DATE_ERROR_MESSAGE,
-      age
-    };
-  }
-
-  return { 
-    isValid: true, 
-    age 
-  };
-}
-
-/**
- * Phone mask formatter supporting both 8-digit and 9-digit formats with DDD:
- * - 8 digits: (34) 9982-4765 (10 digits total)
- * - 9 digits: (34) 99982-4765 (11 digits total)
+ * Phone mask formatter
  */
 export function maskPhone(value: string): string {
   if (!value) return '';
@@ -523,107 +335,59 @@ export function maskPhone(value: string): string {
     return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
   }
   if (digits.length <= 10) {
-    // 8 digits: (XX) XXXX-XXXX (e.g. (34) 9982-4765)
     return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
   }
-  // 11 digits: (XX) XXXXX-XXXX (e.g. (34) 99982-4765)
   return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
 }
 
-/**
- * Detects whether a phone is currently formatted as 8 digits, 9 digits, or incomplete
- */
-export function detectPhoneDigitMode(phone: string): '8digits' | '9digits' | 'incomplete' {
-  const digits = phone.replace(/\D/g, '');
-  if (digits.length === 11) return '9digits';
-  if (digits.length === 10) return '8digits';
-  return 'incomplete';
+export function validateBirthDate(dateStr: string): { isValid: boolean; age?: number; error?: string } {
+  if (!dateStr) return { isValid: false, error: 'Data de nascimento obrigatória.' };
+  const [year, month, day] = dateStr.split('-').map(Number);
+  if (!year || !month || !day) return { isValid: false, error: 'Data inválida.' };
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return { isValid: false, error: 'Data inválida.' };
+  }
+  const today = new Date();
+  let age = today.getFullYear() - year;
+  const m = today.getMonth() + 1 - month;
+  if (m < 0 || (m === 0 && today.getDate() < day)) {
+    age--;
+  }
+  if (age < 18) {
+    return { isValid: false, age, error: 'O cliente deve ter pelo menos 18 anos.' };
+  }
+  if (age > 120) {
+    return { isValid: false, age, error: 'Idade inválida (> 120 anos).' };
+  }
+  return { isValid: true, age };
 }
 
-/**
- * Converts a phone between 8-digit and 9-digit format
- * Examples:
- * - (34) 9982-4765 -> (34) 99982-4765 (when targetDigits === 9)
- * - (34) 99982-4765 -> (34) 9982-4765 (when targetDigits === 8)
- */
-export function convertPhoneDigitMode(phone: string, targetDigits: 8 | 9): string {
-  const digits = phone.replace(/\D/g, '');
-  if (digits.length < 2) return phone;
-
-  const ddd = digits.slice(0, 2);
-  const numberPart = digits.slice(2);
-
-  if (targetDigits === 9) {
-    if (numberPart.length === 8) {
-      // Prepend '9' to the 8-digit number
-      return maskPhone(`${ddd}9${numberPart}`);
-    }
-    return maskPhone(digits);
-  }
-
-  if (targetDigits === 8) {
-    if (numberPart.length === 9) {
-      // If it starts with 9, remove that leading 9
-      if (numberPart.startsWith('9')) {
-        return maskPhone(`${ddd}${numberPart.slice(1)}`);
-      }
-      // Otherwise remove the first digit of the number part
-      return maskPhone(`${ddd}${numberPart.slice(1)}`);
-    }
-    return maskPhone(digits);
-  }
-
-  return maskPhone(phone);
+export function getMaxBirthDateString(yearsAgo = 18): string {
+  const today = new Date();
+  const year = today.getFullYear() - yearsAgo;
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
-/**
- * Validates a Brazilian phone number (requires DDD + 8 or 9 digits)
- */
-export function validatePhone(phone: string): { 
-  isValid: boolean; 
-  error?: string; 
-  digitCount: number;
-  mode: '8digits' | '9digits' | 'incomplete';
-} {
-  const digits = phone.replace(/\D/g, '');
-  if (!digits) {
-    return { 
-      isValid: false, 
-      error: 'O telefone é obrigatório.', 
-      digitCount: 0, 
-      mode: 'incomplete' 
-    };
-  }
+export function getMinBirthDateString(yearsAgo = 120): string {
+  const today = new Date();
+  const year = today.getFullYear() - yearsAgo;
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
-  if (digits.length < 10) {
-    return {
-      isValid: false,
-      error: 'Número incompleto. Digite o DDD + 8 ou 9 dígitos (Ex: (34) 9982-4765 ou (34) 99982-4765).',
-      digitCount: digits.length,
-      mode: 'incomplete'
-    };
+export function calculateExactAge(birthDateStr: string): number {
+  if (!birthDateStr) return 0;
+  const [year, month, day] = birthDateStr.split('-').map(Number);
+  if (!year || !month || !day) return 0;
+  const today = new Date();
+  let age = today.getFullYear() - year;
+  const m = today.getMonth() + 1 - month;
+  if (m < 0 || (m === 0 && today.getDate() < day)) {
+    age--;
   }
-
-  if (digits.length === 10) {
-    return {
-      isValid: true,
-      digitCount: 10,
-      mode: '8digits'
-    };
-  }
-
-  if (digits.length === 11) {
-    return {
-      isValid: true,
-      digitCount: 11,
-      mode: '9digits'
-    };
-  }
-
-  return {
-    isValid: false,
-    error: 'Número excede 11 dígitos. Digite no máximo (XX) XXXXX-XXXX.',
-    digitCount: digits.length,
-    mode: 'incomplete'
-  };
+  return age >= 0 ? age : 0;
 }

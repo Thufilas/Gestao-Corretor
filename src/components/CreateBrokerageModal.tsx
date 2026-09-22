@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { Brokerage } from '../types';
 import { createBrokerage } from '../services/adminService';
+import { isFirebaseConfigured, saveCorretoraToFirestore } from '../services/firebase';
 
 interface CreateBrokerageModalProps {
   isOpen: boolean;
@@ -33,7 +34,7 @@ export const CreateBrokerageModal: React.FC<CreateBrokerageModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -51,6 +52,14 @@ export const CreateBrokerageModal: React.FC<CreateBrokerageModalProps> = ({
         subAdminName.trim() || undefined,
         subAdminEmail.trim() || undefined
       );
+
+      if (isFirebaseConfigured()) {
+        try {
+          await saveCorretoraToFirestore(created);
+        } catch (fbErr) {
+          console.warn('Could not sync new brokerage to Firestore immediately:', fbErr);
+        }
+      }
 
       setSuccess(`Corretora "${created.name}" cadastrada com sucesso!`);
 

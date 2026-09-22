@@ -30,11 +30,12 @@ import {
   getDaysRemaining, 
   getExpiryAlertLevel, 
   getWhatsAppLink, 
-  getRenewalWhatsAppMessage, 
-  POPULAR_INSURERS 
+  getRenewalWhatsAppMessage
 } from '../utils/insuranceUtils';
+import { getAvailableInsurers } from '../services/storage';
 import { exportClientsToExcel, exportClientsToCsv, parseExcelOrCsvFile } from '../services/excelService';
 import { exportClientsToPdf } from '../services/pdfService';
+import { ConfirmationModal } from './ConfirmationModal';
 
 interface ClientListProps {
   clients: Client[];
@@ -66,6 +67,11 @@ export const ClientList: React.FC<ClientListProps> = ({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showImportMenu, setShowImportMenu] = useState(false);
+  const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
+
+  const availableInsurers = useMemo(() => {
+    return getAvailableInsurers(clients, currentUser?.id);
+  }, [clients, currentUser?.id]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const brokerName = currentUser?.name || 'Corretor';
@@ -367,8 +373,10 @@ export const ClientList: React.FC<ClientListProps> = ({
               onChange={(e) => setSelectedInsurer(e.target.value)}
               className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-slate-900 dark:text-white"
             >
-              <option value="all">Todas as Seguradoras</option>
-              {POPULAR_INSURERS.map((ins) => (
+              <option value="all">
+                {availableInsurers.length > 0 ? `Todas as Seguradoras (${availableInsurers.length})` : 'Todas as Seguradoras (Nenhuma cadastrada)'}
+              </option>
+              {availableInsurers.map((ins) => (
                 <option key={ins} value={ins}>{ins}</option>
               ))}
             </select>
@@ -632,10 +640,11 @@ export const ClientList: React.FC<ClientListProps> = ({
                           </button>
 
                           <button
-                            onClick={() => {
-                              if (confirm(`Deseja realmente excluir ${client.name}?`)) {
-                                onDeleteClient(client.id);
-                              }
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setClientToDelete(client);
                             }}
                             className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
                             title="Excluir cliente"
@@ -654,6 +663,29 @@ export const ClientList: React.FC<ClientListProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Confirmation Modal for Client Deletion */}
+      <ConfirmationModal
+        isOpen={Boolean(clientToDelete)}
+        onClose={() => setClientToDelete(null)}
+        onConfirm={() => {
+          if (clientToDelete) {
+            onDeleteClient(clientToDelete.id);
+            showToast(`Cliente "${clientToDelete.name}" excluído com sucesso.`);
+            setClientToDelete(null);
+          }
+        }}
+        title="Excluir Cliente"
+        description={
+          <div>
+            <span>Tem certeza que deseja excluir o cadastro de <strong>{clientToDelete?.name}</strong>?</span>
+            <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              Esta ação removerá permanentemente os dados deste segurado e quaisquer apólices anexadas.
+            </div>
+          </div>
+        }
+        confirmButtonText="Excluir Cliente"
+      />
 
     </div>
   );

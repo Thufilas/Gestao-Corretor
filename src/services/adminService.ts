@@ -61,8 +61,8 @@ export const INITIAL_BROKERS: BrokerAccount[] = [
     role: 'MASTER' as any,
     isAdmin: true,
     status: 'active',
-    clientCount: 14,
-    totalPremiums: 62400.00,
+    clientCount: 0,
+    totalPremiums: 0,
     createdAt: '2024-01-10T08:00:00.000Z'
   },
   {
@@ -78,8 +78,8 @@ export const INITIAL_BROKERS: BrokerAccount[] = [
     role: 'SUB_ADMIN' as any,
     isAdmin: true,
     status: 'active',
-    clientCount: 9,
-    totalPremiums: 48500.00,
+    clientCount: 0,
+    totalPremiums: 0,
     createdAt: '2024-01-15T10:00:00.000Z'
   },
   {
@@ -95,8 +95,8 @@ export const INITIAL_BROKERS: BrokerAccount[] = [
     role: 'CORRETOR' as any,
     isAdmin: false,
     status: 'active',
-    clientCount: 5,
-    totalPremiums: 24200.00,
+    clientCount: 0,
+    totalPremiums: 0,
     createdAt: '2024-03-10T11:15:00.000Z'
   },
   {
@@ -112,8 +112,8 @@ export const INITIAL_BROKERS: BrokerAccount[] = [
     role: 'SUB_ADMIN' as any,
     isAdmin: true,
     status: 'active',
-    clientCount: 4,
-    totalPremiums: 16400.00,
+    clientCount: 0,
+    totalPremiums: 0,
     createdAt: '2024-02-15T10:30:00.000Z'
   },
   {
@@ -129,8 +129,8 @@ export const INITIAL_BROKERS: BrokerAccount[] = [
     role: 'CORRETOR' as any,
     isAdmin: false,
     status: 'active',
-    clientCount: 6,
-    totalPremiums: 27850.00,
+    clientCount: 0,
+    totalPremiums: 0,
     createdAt: '2024-03-01T14:20:00.000Z'
   },
   {
@@ -146,8 +146,8 @@ export const INITIAL_BROKERS: BrokerAccount[] = [
     role: 'SUB_ADMIN' as any,
     isAdmin: true,
     status: 'active',
-    clientCount: 8,
-    totalPremiums: 41200.00,
+    clientCount: 0,
+    totalPremiums: 0,
     createdAt: '2024-05-20T16:45:00.000Z'
   },
   {
@@ -163,8 +163,8 @@ export const INITIAL_BROKERS: BrokerAccount[] = [
     role: 'CORRETOR' as any,
     isAdmin: false,
     status: 'inactive',
-    clientCount: 2,
-    totalPremiums: 8900.00,
+    clientCount: 0,
+    totalPremiums: 0,
     createdAt: '2024-04-12T09:15:00.000Z'
   }
 ];
@@ -178,21 +178,11 @@ export function getBrokerageIdFromName(name?: string): string {
 export function loadAllBrokerages(): Brokerage[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_BROKERAGES);
-    let brokerages: Brokerage[] = [];
-
     if (!raw) {
-      brokerages = [...INITIAL_BROKERAGES];
-      localStorage.setItem(STORAGE_KEY_BROKERAGES, JSON.stringify(brokerages));
-    } else {
-      brokerages = JSON.parse(raw);
+      localStorage.setItem(STORAGE_KEY_BROKERAGES, JSON.stringify(INITIAL_BROKERAGES));
+      return INITIAL_BROKERAGES;
     }
-
-    INITIAL_BROKERAGES.forEach(init => {
-      if (!brokerages.some(b => b.id === init.id || b.name.toLowerCase() === init.name.toLowerCase())) {
-        brokerages.push(init);
-      }
-    });
-
+    const brokerages: Brokerage[] = JSON.parse(raw);
     return brokerages;
   } catch (err) {
     console.error('Error loading brokerages:', err);
@@ -246,18 +236,17 @@ export function loadAllBrokers(): BrokerAccount[] {
       brokers = JSON.parse(raw);
     }
 
-    INITIAL_BROKERS.forEach(initBroker => {
-      if (!brokers.some(b => b.id === initBroker.id || b.email.toLowerCase() === initBroker.email.toLowerCase())) {
-        brokers.push(initBroker);
-      }
-    });
+    // Ensure Master Admin is present in the list
+    const masterInit = INITIAL_BROKERS.find(b => b.id === ADMIN_USER_ID);
+    if (masterInit && !brokers.some(b => b.id === ADMIN_USER_ID)) {
+      brokers.unshift(masterInit);
+      localStorage.setItem(STORAGE_KEY_REGISTERED_BROKERS, JSON.stringify(brokers));
+    }
 
     return brokers.map(b => {
       const userClients: Client[] = loadClients(b.id);
-      const actualCount = userClients.length > 0 ? userClients.length : (b.clientCount || 0);
-      const actualPremiums = userClients.length > 0 
-        ? userClients.reduce((acc, curr) => acc + (curr.totalInsuredValue || 0), 0)
-        : (b.totalPremiums || 0);
+      const actualCount = userClients.length;
+      const actualPremiums = userClients.reduce((acc, curr) => acc + (curr.totalInsuredValue || 0), 0);
 
       // Padronização e normalização da Role
       const rawRole = String(b.role || '').toUpperCase();
@@ -454,7 +443,7 @@ export function updateBrokerAccount(
         }
       }
 
-      const activeBrokerageId = safeData.brokerageId || b.brokerageId || b.corretora_id;
+      const activeBrokerageId = safeData.brokerageId || b.brokerageId || b.corretora_id || '';
 
       const updated: BrokerAccount = { 
         ...b, 
@@ -561,6 +550,25 @@ export function toggleBrokerStatus(brokerId: string, editorUser?: User | null): 
   });
 
   saveAllBrokers(updatedList);
+  return updatedList;
+}
+
+export function deleteBrokerAccount(brokerId: string): BrokerAccount[] {
+  if (!brokerId) return loadAllBrokers();
+  if (brokerId === ADMIN_USER_ID) {
+    throw new Error('Não é permitido excluir a conta Admin Master principal.');
+  }
+  const brokers = loadAllBrokers();
+  const updatedList = brokers.filter(b => b.id !== brokerId && (b as any).uid !== brokerId);
+  saveAllBrokers(updatedList);
+  return updatedList;
+}
+
+export function deleteBrokerage(brokerageId: string): Brokerage[] {
+  if (!brokerageId) return loadAllBrokerages();
+  const brokerages = loadAllBrokerages();
+  const updatedList = brokerages.filter(b => b.id !== brokerageId);
+  saveAllBrokerages(updatedList);
   return updatedList;
 }
 

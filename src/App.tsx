@@ -15,7 +15,7 @@ import {
   deleteClientFromFirestore, 
   isFirebaseConfigured 
 } from './services/firebase';
-import { getExpiryAlerts } from './utils/insuranceUtils';
+import { getExpiryAlerts, isMasterAdmin } from './utils/insuranceUtils';
 import { useAuth } from './context/AuthContext';
 import { Navbar } from './components/Navbar';
 import { Dashboard } from './components/Dashboard';
@@ -31,7 +31,6 @@ import { FirebaseTroubleshootModal } from './components/FirebaseTroubleshootModa
 import { ProfileModal } from './components/ProfileModal';
 import { LoginView } from './components/LoginView';
 import { AdminView } from './components/AdminView';
-import { SubAdminBrokerageView } from './components/SubAdminBrokerageView';
 import { ShieldCheck, Loader2 } from 'lucide-react';
 
 export default function App() {
@@ -39,7 +38,6 @@ export default function App() {
     user: currentUser, 
     loading: isAuthLoading, 
     isMaster,
-    isSubAdmin: isSubFromAuth,
     hasAdminAccess,
     login: handleLogin, 
     logout: handleLogout, 
@@ -49,7 +47,7 @@ export default function App() {
 
   const [clients, setClients] = useState<Client[]>([]);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => loadTheme());
-  const [currentTab, setCurrentTab] = useState<'dashboard' | 'clients' | 'alerts' | 'birthdays' | 'admin' | 'corretora'>('dashboard');
+  const [currentTab, setCurrentTab] = useState<'dashboard' | 'clients' | 'alerts' | 'birthdays' | 'admin'>('dashboard');
 
   // Modals state
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
@@ -76,39 +74,22 @@ export default function App() {
     }
   }, [theme]);
 
-  // Checagens unificadas de permissão
-  const userRoleUpper = String(currentUser?.role || '').toUpperCase();
-  const isUserSubAdmin = isSubFromAuth || userRoleUpper === 'SUB_ADMIN' || userRoleUpper === 'SUBADMIN' || userRoleUpper === 'GESTOR';
-  const isUserAdminOrMaster = isMaster || hasAdminAccess || userRoleUpper === 'MASTER' || userRoleUpper === 'ADMIN';
+  const isUserMasterAdmin = isMasterAdmin(currentUser) || isMaster || hasAdminAccess;
 
-  // Router Guard: If user is on admin or corretora tab, revalidate access
+  // Router Guard: If user is on admin tab and not master admin, redirect to dashboard
   useEffect(() => {
-    if ((currentTab === 'admin' || currentTab === 'corretora') && currentUser) {
-      if (currentTab === 'corretora' && !isUserSubAdmin) {
+    if (currentTab === 'admin' && currentUser) {
+      if (!isUserMasterAdmin) {
         refreshProfile().then((refreshed) => {
-          const refreshedRole = String(refreshed?.role || '').toUpperCase();
-          const isValidSub = refreshedRole === 'SUB_ADMIN' || refreshedRole === 'SUBADMIN' || refreshedRole === 'GESTOR';
-          if (!refreshed || !isValidSub) {
+          if (!refreshed || !isMasterAdmin(refreshed)) {
             setCurrentTab('dashboard');
           }
         }).catch(() => {
           setCurrentTab('dashboard');
         });
-      } else if (currentTab === 'admin' && !isUserAdminOrMaster) {
-        refreshProfile().then((refreshed) => {
-          const refreshedRole = String(refreshed?.role || '').toUpperCase();
-          const revalidated = refreshedRole === 'MASTER' || refreshedRole === 'SUB_ADMIN' || refreshedRole === 'ADMIN' || refreshedRole === 'SUBADMIN';
-          if (!revalidated) {
-            setCurrentTab('dashboard');
-          }
-        }).catch(() => {
-          if (!isUserAdminOrMaster) {
-            setCurrentTab('dashboard');
-          }
-        });
       }
     }
-  }, [currentTab, currentUser, isUserSubAdmin, isUserAdminOrMaster, refreshProfile]);
+  }, [currentTab, currentUser, isUserMasterAdmin, refreshProfile]);
 
   // Whenever the active user changes, reload strictly their isolated clients
   useEffect(() => {
@@ -150,12 +131,11 @@ export default function App() {
     const next = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
     saveTheme(next);
-  };
-
-  const handleSeedDemoClients = () => {
-    if (!currentUser?.id) return;
-    const seeded = seedSampleClientsForUser(currentUser.id);
-    setClients(seeded);
+    if (next === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
   };
 
   const handleOpenNewClient = () => {
@@ -173,53 +153,6 @@ export default function App() {
     setIsDetailModalOpen(true);
   };
 
-  const handleSaveClient = (clientData: Client) => {
-    const isEditing = !!clientToEdit;
-    let updated: Client[];
-
-    if (isEditing) {
-      updated = clients.map(c => c.id === clientData.id ? clientData : c);
-    } else {
-      updated = [clientData, ...clients];
-    }
-
-    updateClients(updated);
-    setIsClientModalOpen(false);
-    setClientToEdit(null);
-
-    // Sync save to Firestore if configured
-    if (currentUser) {
-      saveClientToFirestore(clientData, currentUser).catch(err => {
-        console.warn('Background Firestore save failed:', err);
-      });
-    }
-  };
-
-  const handleDeleteClient = (id: string) => {
-    const clientToDelete = clients.find(c => c.id === id);
-    if (clientToDelete?.document?.id) {
-      deleteDocumentFile(clientToDelete.document.id);
-      if (clientToDelete.document.storagePath) {
-        deletePolicyFromFirebaseStorage(clientToDelete.document.storagePath).catch(err => {
-          console.warn('Background Firebase Storage document deletion failed:', err);
-        });
-      }
-    }
-
-    const updated = clients.filter(c => c.id !== id);
-    updateClients(updated);
-
-    if (clientForDetail?.id === id) {
-      setIsDetailModalOpen(false);
-      setClientForDetail(null);
-    }
-
-    // Sync delete to Firestore if configured
-    deleteClientFromFirestore(id).catch(err => {
-      console.warn('Background Firestore delete failed:', err);
-    });
-  };
-
   const handleViewDocument = (client: Client) => {
     if (client.document) {
       setDocToView(client.document);
@@ -228,72 +161,118 @@ export default function App() {
     }
   };
 
-  const handleImportClients = (imported: Client[], mode: 'append' | 'replace') => {
-    if (mode === 'replace') {
-      updateClients(imported);
-      if (currentUser) {
-        imported.forEach(nc => {
-          saveClientToFirestore(nc, currentUser).catch(e => console.warn('Import Firestore sync error:', e));
-        });
-      }
-    } else {
-      const existingIds = new Set(clients.map(c => c.id));
-      const newOnly = imported.filter(c => !existingIds.has(c.id));
-      const merged = [...newOnly, ...clients];
-      updateClients(merged);
+  const handleSaveClient = async (clientData: Omit<Client, 'id' | 'createdAt' | 'updatedAt'>) => {
+    if (!currentUser) return;
 
-      if (currentUser) {
-        newOnly.forEach(nc => {
-          saveClientToFirestore(nc, currentUser).catch(e => console.warn('Import Firestore sync error:', e));
-        });
+    const now = new Date().toISOString();
+
+    if (clientToEdit) {
+      const updatedList = clients.map(c => {
+        if (c.id === clientToEdit.id) {
+          const updated: Client = {
+            ...c,
+            ...clientData,
+            updatedAt: now
+          };
+          if (isFirebaseConfigured()) {
+            saveClientToFirestore(updated).catch(err => console.warn('Error saving client update to Firestore:', err));
+          }
+          return updated;
+        }
+        return c;
+      });
+      updateClients(updatedList);
+    } else {
+      const newClient: Client = {
+        ...clientData,
+        id: `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        createdAt: now,
+        updatedAt: now
+      };
+      const updatedList = [newClient, ...clients];
+      updateClients(updatedList);
+      if (isFirebaseConfigured()) {
+        saveClientToFirestore(newClient).catch(err => console.warn('Error saving new client to Firestore:', err));
       }
+    }
+    setIsClientModalOpen(false);
+    setClientToEdit(null);
+  };
+
+  const handleDeleteClient = async (clientId: string) => {
+    const client = clients.find(c => c.id === clientId);
+    if (!client) return;
+
+    if (client.document) {
+      try {
+        await deleteDocumentFile(client.document.id);
+        if (isFirebaseConfigured() && client.document.storagePath) {
+          await deletePolicyFromFirebaseStorage(client.document.storagePath);
+        }
+      } catch (e) {
+        console.warn('Error deleting doc files:', e);
+      }
+    }
+
+    const updated = clients.filter(c => c.id !== clientId);
+    updateClients(updated);
+
+    if (isFirebaseConfigured()) {
+      deleteClientFromFirestore(clientId).catch(err => console.warn('Error deleting client from Firestore:', err));
     }
   };
 
-  // Critical alerts count for badge in navbar
-  const criticalAlertsCount = getExpiryAlerts(clients).filter(
-    a => a.alertLevel === 'red' || a.alertLevel === 'expired'
-  ).length;
+  const handleImportClients = (imported: Client[], mode: 'append' | 'replace' = 'append') => {
+    if (!currentUser) return;
+    const now = new Date().toISOString();
 
-  // Loading state
+    const processed = imported.map(c => ({
+      ...c,
+      id: c.id || `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      createdAt: c.createdAt || now,
+      updatedAt: now
+    }));
+
+    let nextClients = mode === 'replace' ? processed : [...processed, ...clients];
+    updateClients(nextClients);
+
+    if (isFirebaseConfigured()) {
+      processed.forEach(c => {
+        saveClientToFirestore(c).catch(err => console.warn('Error syncing imported client to Firestore:', err));
+      });
+    }
+  };
+
+  const handleSeedSampleData = () => {
+    if (!currentUser) return;
+    const seeded = seedSampleClientsForUser(currentUser.id);
+    updateClients(seeded);
+  };
+
+  // Critical expiry alerts count
+  const alertsList = getExpiryAlerts(clients);
+  const criticalAlertsCount = alertsList.filter(a => a.alertLevel === 'red' || a.alertLevel === 'expired').length;
+
   if (isAuthLoading) {
     return (
-      <div className={`min-h-screen flex items-center justify-center p-4 transition-colors ${theme === 'dark' ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
-        <div className="flex flex-col items-center gap-4 text-center max-w-sm">
-          <div className="relative flex items-center justify-center">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-cyan-600 to-blue-700 flex items-center justify-center text-white shadow-xl shadow-cyan-600/20 animate-pulse">
-              <ShieldCheck className="w-9 h-9" />
-            </div>
-            <Loader2 className="w-6 h-6 text-cyan-400 absolute -bottom-1 -right-1 animate-spin" />
-          </div>
-          <div>
-            <h2 className="text-base font-bold text-slate-900 dark:text-white">
-              GestãoCorretor
-            </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Sincronizando perfil e permissões de acesso...
-            </p>
-          </div>
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white gap-4">
+        <div className="w-16 h-16 rounded-2xl bg-cyan-600 flex items-center justify-center shadow-lg shadow-cyan-500/30 animate-pulse">
+          <ShieldCheck className="w-8 h-8 text-white" />
+        </div>
+        <div className="flex items-center gap-2 text-slate-300 font-medium">
+          <Loader2 className="w-5 h-5 animate-spin text-cyan-400" />
+          <span>Carregando GestãoCorretor CRM...</span>
         </div>
       </div>
     );
   }
 
-  // If user is not authenticated, show modern login view
   if (!currentUser) {
-    return (
-      <LoginView 
-        onLoginSuccess={handleLogin} 
-        theme={theme}
-        onToggleTheme={handleToggleTheme}
-      />
-    );
+    return <LoginView onLoginSuccess={handleLogin} theme={theme} onToggleTheme={handleToggleTheme} />;
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors">
-      
-      {/* Top Navigation */}
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors flex flex-col">
       <Navbar
         currentTab={currentTab}
         setCurrentTab={setCurrentTab}
@@ -309,8 +288,7 @@ export default function App() {
         criticalAlertsCount={criticalAlertsCount}
       />
 
-      {/* Main Content Area */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {currentTab === 'dashboard' && (
           <Dashboard
             clients={clients}
@@ -322,7 +300,7 @@ export default function App() {
             currentUser={currentUser}
             onOpenProfile={() => setIsProfileModalOpen(true)}
             onOpenImportExport={() => setIsImportExportOpen(true)}
-            onSeedDemoData={handleSeedDemoClients}
+            onSeedDemoData={handleSeedSampleData}
           />
         )}
 
@@ -357,14 +335,8 @@ export default function App() {
           />
         )}
 
-        {currentTab === 'admin' && isUserAdminOrMaster && (
+        {currentTab === 'admin' && isUserMasterAdmin && (
           <AdminView
-            currentUser={currentUser}
-          />
-        )}
-
-        {currentTab === 'corretora' && isUserSubAdmin && (
-          <SubAdminBrokerageView
             currentUser={currentUser}
           />
         )}

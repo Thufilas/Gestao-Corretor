@@ -9,15 +9,14 @@ import {
   Moon, 
   Sun, 
   User as UserIcon,
-  Crown,
-  Building2
+  Crown
 } from 'lucide-react';
 import { User } from '../types';
-import { getUserFirstName, isMasterAdmin, isSubAdmin } from '../utils/insuranceUtils';
+import { getUserFirstName, isMasterAdmin } from '../utils/insuranceUtils';
 
 interface NavbarProps {
-  currentTab: 'dashboard' | 'clients' | 'alerts' | 'birthdays' | 'admin' | 'corretora';
-  setCurrentTab: (tab: 'dashboard' | 'clients' | 'alerts' | 'birthdays' | 'admin' | 'corretora') => void;
+  currentTab: 'dashboard' | 'clients' | 'alerts' | 'birthdays' | 'admin';
+  setCurrentTab: (tab: 'dashboard' | 'clients' | 'alerts' | 'birthdays' | 'admin') => void;
   user: User | null;
   onLogout: () => void;
   onOpenProfile?: () => void;
@@ -40,20 +39,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleTheme,
   criticalAlertsCount
 }) => {
-  // Normalização da role para aceitar variações de caixa/string
-  const userRoleUpper = String(user?.role || '').toUpperCase();
-
-  // Verificação de Admin Master
-  const isMaster = Boolean(
-    user && (userRoleUpper === 'MASTER' || userRoleUpper === 'ADMIN' || isMasterAdmin(user))
-  );
-
-  // Verificação de Sub-Admin/Gestor
-  const isSubRole = userRoleUpper === 'SUB_ADMIN' || userRoleUpper === 'SUBADMIN' || userRoleUpper === 'GESTOR' || isSubAdmin(user);
-  const hasCorretora = Boolean(user?.corretora_id || user?.brokerageId || user?.brokerageName);
-  
-  // Exibe a aba "Corretora" se o usuário for Sub-Admin
-  const isSub = isSubRole && hasCorretora;
+  const isMaster = isMasterAdmin(user);
 
   return (
     <header className="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors">
@@ -72,10 +58,10 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
               <div className="flex flex-col justify-center">
                 <span className="font-bold text-base sm:text-lg text-slate-900 dark:text-white tracking-tight leading-snug truncate max-w-[170px] sm:max-w-[220px]">
-                  {user?.brokerageName || 'Corretora de Seguros'}
+                  {user?.brokerageName || 'GestãoCorretor CRM'}
                 </span>
                 <span className="text-xs text-slate-500 dark:text-slate-400 font-medium leading-none mt-0.5">
-                  GestãoCorretor CRM
+                  Seguros & Clientes
                 </span>
               </div>
             </button>
@@ -140,7 +126,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span>Aniversariantes</span>
             </button>
 
-            {/* Master Admin Tab */}
+            {/* Admin Master Tab (EXCLUSIVELY if isMasterAdmin) */}
             {isMaster && (
               <button
                 id="nav-tab-admin"
@@ -152,36 +138,13 @@ export const Navbar: React.FC<NavbarProps> = ({
                 }`}
               >
                 <Crown className="w-4 h-4 shrink-0 text-indigo-300" />
-                <span>Painel Admin</span>
+                <span>Administração</span>
                 <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
                   currentTab === 'admin'
                     ? 'bg-black/20 text-white'
                     : 'bg-indigo-100 dark:bg-indigo-950/90 text-indigo-800 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80'
                 }`}>
                   Master
-                </span>
-              </button>
-            )}
-
-            {/* Sub-Admin Brokerage Tab */}
-            {isSub && (
-              <button
-                id="nav-tab-corretora"
-                onClick={() => setCurrentTab('corretora')}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
-                  currentTab === 'corretora'
-                    ? 'bg-indigo-600 text-white shadow-xs font-bold'
-                    : 'text-indigo-700 dark:text-indigo-300 hover:text-indigo-800 dark:hover:text-indigo-200 hover:bg-indigo-100/80 dark:hover:bg-indigo-950/60'
-                }`}
-              >
-                <Building2 className="w-4 h-4 shrink-0 text-indigo-300" />
-                <span>Corretora</span>
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                  currentTab === 'corretora'
-                    ? 'bg-black/20 text-white'
-                    : 'bg-indigo-100 dark:bg-indigo-950/90 text-indigo-800 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80'
-                }`}>
-                  Gestor
                 </span>
               </button>
             )}
@@ -195,19 +158,15 @@ export const Navbar: React.FC<NavbarProps> = ({
               type="button"
               onClick={onOpenProfile}
               className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/80 border border-transparent hover:border-slate-200 dark:hover:border-slate-700/80 transition-all cursor-pointer group"
-              title="Editar Perfil do Corretor"
+              title="Editar Perfil"
             >
               <div className={`w-8 h-8 rounded-xl text-white flex items-center justify-center text-xs font-bold shadow-xs group-hover:scale-105 transition-transform shrink-0 ${
                 isMaster 
                   ? 'bg-gradient-to-tr from-amber-500 to-amber-600' 
-                  : isSub
-                    ? 'bg-gradient-to-tr from-purple-600 to-indigo-600'
-                    : 'bg-gradient-to-tr from-cyan-600 to-blue-600'
+                  : 'bg-gradient-to-tr from-cyan-600 to-blue-600'
               }`}>
                 {isMaster ? (
                   <Crown className="w-4 h-4 text-white" />
-                ) : isSub ? (
-                  <ShieldCheck className="w-4 h-4 text-white" />
                 ) : (
                   <UserIcon className="w-4 h-4 text-white" />
                 )}
@@ -219,12 +178,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </span>
                 {isMaster && (
                   <span className="px-1.5 py-0.5 text-[10px] font-extrabold rounded-md bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-300 dark:border-amber-800/80 uppercase tracking-wider whitespace-nowrap">
-                    ADMIN
-                  </span>
-                )}
-                {isSub && (
-                  <span className="px-1.5 py-0.5 text-[10px] font-extrabold rounded-md bg-purple-100 text-purple-800 dark:bg-purple-950/80 dark:text-purple-300 border border-purple-300 dark:border-purple-800/80 uppercase tracking-wider whitespace-nowrap">
-                    GESTOR
+                    MASTER
                   </span>
                 )}
               </div>
@@ -305,19 +259,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Crown className="w-4 h-4 text-indigo-500" />
               <span>Admin</span>
-            </button>
-          )}
-
-          {isSub && (
-            <button
-              id="mobile-nav-tab-corretora"
-              onClick={() => setCurrentTab('corretora')}
-              className={`flex flex-col items-center py-1 px-2 font-bold ${
-                currentTab === 'corretora' ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500'
-              }`}
-            >
-              <Building2 className="w-4 h-4 text-indigo-500" />
-              <span>Corretora</span>
             </button>
           )}
         </div>

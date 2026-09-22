@@ -6,6 +6,10 @@ const STORE_DOCUMENTS = 'policy_documents';
 const STORAGE_KEY_DEMO_CLIENTS = 'gestao_corretor_clients_demo';
 const STORAGE_KEY_USER = 'gestao_corretor_user_v1';
 const STORAGE_KEY_THEME = 'gestao_corretor_theme_v1';
+const STORAGE_KEY_REGISTERED_INSURERS_PREFIX = 'gestao_corretor_insurers_';
+
+// List of legacy mock client IDs to filter out and purge
+const MOCK_CLIENT_IDS = new Set(['cli-001', 'cli-002', 'cli-003', 'cli-004', 'cli-005', 'cli-006', 'cli-007']);
 
 // IndexedDB Helper for handling large binary files (PDFs/Images)
 function openDB(): Promise<IDBDatabase> {
@@ -68,169 +72,9 @@ export async function deleteDocumentFile(id: string): Promise<void> {
   }
 }
 
-// Sample initial data generation to simulate a realistic insurance broker portfolio
-function getInitialSampleClients(): Client[] {
-  const today = new Date();
-  
-  const formatDate = (date: Date): string => {
-    return date.toISOString().split('T')[0];
-  };
-
-  const addDays = (base: Date, days: number): Date => {
-    const res = new Date(base);
-    res.setDate(res.getDate() + days);
-    return res;
-  };
-
-  return [
-    {
-      id: 'cli-001',
-      name: 'Roberto Andrade Filho',
-      birthDate: '1984-09-24', // Aniversário em breve
-      insuranceCompany: 'Porto Seguro',
-      startDate: formatDate(addDays(today, -360)),
-      endDate: formatDate(addDays(today, 5)), // Alerta Vermelho (5 dias)
-      phone: '(11) 98765-4321',
-      vehicleModel: 'Toyota Corolla Altis 2.0 2022',
-      licensePlate: 'BRA2E19',
-      totalInsuredValue: 4350.00,
-      commissionRate: 18.0,
-      commissionAmount: 4350 * 0.18, // 783.00
-      clientType: 'Renovação',
-      notes: 'Cliente premium há 4 anos. Já manifestou interesse em renovar com franquia reduzida.',
-      document: {
-        id: 'doc-001',
-        name: 'Apolice_PortoSeguro_RobertoAndrade.pdf',
-        size: 245000,
-        type: 'application/pdf',
-        uploadedAt: new Date().toISOString()
-      },
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    },
-    {
-      id: 'cli-002',
-      name: 'Mariana Costa Siqueira',
-      birthDate: '1992-09-21', // Aniversário amanhã!
-      insuranceCompany: 'Allianz Seguros',
-      startDate: formatDate(addDays(today, -355)),
-      endDate: formatDate(addDays(today, 9)), // Alerta Vermelho (9 dias)
-      phone: '(11) 99123-8877',
-      vehicleModel: 'Jeep Compass Longitude 2023',
-      licensePlate: 'FGH4J55',
-      totalInsuredValue: 5600.00,
-      commissionRate: 20.0,
-      commissionAmount: 5600 * 0.20, // 1120.00
-      clientType: 'Novo',
-      notes: 'Primeira renovação. Enviar comparativo com Azul e Porto.',
-      document: {
-        id: 'doc-002',
-        name: 'Apolice_Allianz_MarianaCosta.pdf',
-        size: 189000,
-        type: 'application/pdf',
-        uploadedAt: new Date().toISOString()
-      },
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    },
-    {
-      id: 'cli-003',
-      name: 'Carlos Henrique Viana',
-      birthDate: '1978-10-05',
-      insuranceCompany: 'Bradesco Seguros',
-      startDate: formatDate(addDays(today, -350)),
-      endDate: formatDate(addDays(today, 14)), // Alerta Laranja (14 dias)
-      phone: '(19) 98111-2233',
-      vehicleModel: 'Honda Civic Touring 1.5 2021',
-      licensePlate: 'KLP9A88',
-      totalInsuredValue: 3980.00,
-      commissionRate: 15.0,
-      commissionAmount: 3980 * 0.15, // 597.00
-      clientType: 'Renovação',
-      notes: 'Carro com rastreador instalado. Tem desconto de pontualidade.',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    },
-    {
-      id: 'cli-004',
-      name: 'Fernanda Lima Oliveira',
-      birthDate: '1989-11-12',
-      insuranceCompany: 'Tokio Marine',
-      startDate: formatDate(addDays(today, -345)),
-      endDate: formatDate(addDays(today, 22)), // Alerta Amarelo (22 dias)
-      phone: '(21) 97654-3210',
-      vehicleModel: 'Hyundai Creta Ultimate 2.0 2024',
-      licensePlate: 'RIO3B44',
-      totalInsuredValue: 4800.00,
-      commissionRate: 17.5,
-      commissionAmount: 4800 * 0.175, // 840.00
-      clientType: 'Renovação',
-      notes: 'Pediu para verificar inclusão de vidros e faróis completos.',
-      document: {
-        id: 'doc-004',
-        name: 'Apolice_Tokio_FernandaLima.pdf',
-        size: 312000,
-        type: 'application/pdf',
-        uploadedAt: new Date().toISOString()
-      },
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    },
-    {
-      id: 'cli-005',
-      name: 'Lucas Martins Albuquerque',
-      birthDate: '1995-09-29',
-      insuranceCompany: 'Azul Seguros',
-      startDate: formatDate(addDays(today, -340)),
-      endDate: formatDate(addDays(today, 28)), // Alerta Amarelo (28 dias)
-      phone: '(31) 98444-5566',
-      vehicleModel: 'Chevrolet Tracker Premier 2023',
-      licensePlate: 'MGX8C12',
-      totalInsuredValue: 3400.00,
-      commissionRate: 16.0,
-      commissionAmount: 3400 * 0.16, // 544.00
-      clientType: 'Novo',
-      notes: 'Seguro jovem com condutor adicional (esposa).',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    },
-    {
-      id: 'cli-006',
-      name: 'Beatriz Vasconcelos',
-      birthDate: '1986-10-18',
-      insuranceCompany: 'HDI Seguros',
-      startDate: formatDate(addDays(today, -180)),
-      endDate: formatDate(addDays(today, 185)), // Vigente
-      phone: '(41) 99888-7766',
-      vehicleModel: 'Volkswagen T-Cross Highline 2023',
-      licensePlate: 'PRT5D33',
-      totalInsuredValue: 4100.00,
-      commissionRate: 18.0,
-      commissionAmount: 4100 * 0.18, // 738.00
-      clientType: 'Renovação',
-      notes: 'Apólice sem sinistro.',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    },
-    {
-      id: 'cli-007',
-      name: 'Guilherme Rocha Mendes',
-      birthDate: '1972-09-20', // Hoje é aniversário!
-      insuranceCompany: 'Mapfre Seguros',
-      startDate: formatDate(addDays(today, -90)),
-      endDate: formatDate(addDays(today, 275)), // Vigente
-      phone: '(11) 97111-9988',
-      vehicleModel: 'BMW 320i M Sport 2022',
-      licensePlate: 'SPK1A99',
-      totalInsuredValue: 8900.00,
-      commissionRate: 22.0,
-      commissionAmount: 8900 * 0.22, // 1958.00
-      clientType: 'Renovação',
-      notes: 'Cliente corporativo com frota familiar.',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    }
-  ];
+// Return empty array - No mock/seed clients inserted automatically
+export function getInitialSampleClients(): Client[] {
+  return [];
 }
 
 // User / Auth Storage API
@@ -238,13 +82,13 @@ export const DEMO_USER_ID = 'usr-01';
 
 export const DEFAULT_USER: User = {
   id: DEMO_USER_ID,
-  name: 'Carlos Eduardo Silva',
-  firstName: 'Carlos',
-  lastName: 'Eduardo Silva',
-  email: 'corretor@gestaocorretor.com.br',
-  susep: '10.203948/2024',
-  brokerageName: 'Silva Corretora de Seguros',
-  isAdmin: false
+  name: 'Administrador Master',
+  firstName: 'Administrador',
+  lastName: 'Master',
+  email: 'admin@gestaocorretor.com.br',
+  susep: '00.000001/2024',
+  brokerageName: 'GestãoCorretor',
+  isAdmin: true
 };
 
 export function getClientsStorageKey(userId?: string | null): string {
@@ -254,7 +98,32 @@ export function getClientsStorageKey(userId?: string | null): string {
   return `gestao_corretor_clients_${userId}`;
 }
 
-// Client Storage API with strict per-user isolation
+/**
+ * Filter out any mock/demo client relics from previous seedings
+ */
+export function sanitizeClientsList(list: Client[]): Client[] {
+  if (!Array.isArray(list)) return [];
+  return list.filter(c => {
+    if (!c || !c.id) return false;
+    // Filter out known initial mock IDs
+    if (MOCK_CLIENT_IDS.has(c.id)) return false;
+    // Filter out specific mock sample names if associated with mock dates
+    if (c.id.startsWith('cli-00') && (
+      c.name === 'Roberto Andrade Filho' ||
+      c.name === 'Mariana Costa Siqueira' ||
+      c.name === 'Carlos Henrique Viana' ||
+      c.name === 'Fernanda Lima Oliveira' ||
+      c.name === 'Lucas Martins Albuquerque' ||
+      c.name === 'Beatriz Vasconcelos' ||
+      c.name === 'Guilherme Rocha Mendes'
+    )) {
+      return false;
+    }
+    return true;
+  });
+}
+
+// Client Storage API with strict per-user isolation and clean start
 export function loadClients(userId?: string | null): Client[] {
   try {
     // If no user is logged in, return empty list
@@ -265,22 +134,19 @@ export function loadClients(userId?: string | null): Client[] {
     const storageKey = getClientsStorageKey(userId);
     const raw = localStorage.getItem(storageKey);
 
-    // DEMO mode: seed realistic initial data if demo storage is empty
-    if (userId === DEMO_USER_ID || userId === 'demo') {
-      if (!raw) {
-        const initial = getInitialSampleClients();
-        localStorage.setItem(storageKey, JSON.stringify(initial));
-        return initial;
-      }
-      return JSON.parse(raw);
-    }
-
-    // REAL user (Firebase Auth or new user): start completely CLEAN if no clients saved yet
     if (!raw) {
       return [];
     }
 
-    return JSON.parse(raw);
+    const parsed: Client[] = JSON.parse(raw);
+    const sanitized = sanitizeClientsList(parsed);
+
+    // If mock clients were found and cleaned up, update storage
+    if (sanitized.length !== parsed.length) {
+      localStorage.setItem(storageKey, JSON.stringify(sanitized));
+    }
+
+    return sanitized;
   } catch (e) {
     console.error('Failed to load clients:', e);
     return [];
@@ -290,17 +156,15 @@ export function loadClients(userId?: string | null): Client[] {
 export function saveClients(clients: Client[], userId?: string | null): void {
   try {
     const storageKey = getClientsStorageKey(userId);
-    localStorage.setItem(storageKey, JSON.stringify(clients));
+    const sanitized = sanitizeClientsList(clients);
+    localStorage.setItem(storageKey, JSON.stringify(sanitized));
   } catch (e) {
     console.error('Failed to save clients:', e);
   }
 }
 
-// Optional helper if a real user specifically chooses to seed demo data into their account
 export function seedSampleClientsForUser(userId: string): Client[] {
-  const initial = getInitialSampleClients();
-  saveClients(initial, userId);
-  return initial;
+  return [];
 }
 
 export function clearUserClients(userId?: string | null): void {
@@ -310,6 +174,118 @@ export function clearUserClients(userId?: string | null): void {
   } catch (e) {
     console.error('Failed to clear user clients:', e);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Seguradoras (Insurers) Management API
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_MAJOR_INSURERS: string[] = [
+  'Allianz Seguros',
+  'Azul Seguros',
+  'Bradesco Seguros',
+  'HDI Seguros',
+  'Icatu Seguros',
+  'Liberty Seguros',
+  'MAPFRE Seguros',
+  'Mitsui Sumitomo Seguros',
+  'Porto Seguro',
+  'Sompo Seguros',
+  'Suhai Seguradora',
+  'SulAmérica',
+  'Tokio Marine Seguradora',
+  'Yelum Seguradora',
+  'Zurich Seguros'
+];
+
+export function getInsurersStorageKey(userId?: string | null): string {
+  // Insurers list is system-wide global so all brokers benefit from Admin Master configuration
+  return `${STORAGE_KEY_REGISTERED_INSURERS_PREFIX}global`;
+}
+
+export function loadRegisteredInsurers(userId?: string | null): string[] {
+  try {
+    const key = getInsurersStorageKey(userId);
+    const raw = localStorage.getItem(key);
+    if (!raw) {
+      // Auto-initialize with default major insurers
+      saveRegisteredInsurers(DEFAULT_MAJOR_INSURERS, userId);
+      return DEFAULT_MAJOR_INSURERS;
+    }
+    const list = JSON.parse(raw);
+    if (Array.isArray(list) && list.length > 0) {
+      const cleaned = list.filter(item => typeof item === 'string' && item.trim().length > 0);
+      if (cleaned.length > 0) {
+        return cleaned.sort((a, b) => a.localeCompare(b, 'pt-BR'));
+      }
+    }
+    return DEFAULT_MAJOR_INSURERS;
+  } catch {
+    return DEFAULT_MAJOR_INSURERS;
+  }
+}
+
+export function saveRegisteredInsurers(insurers: string[], userId?: string | null): void {
+  try {
+    const key = getInsurersStorageKey(userId);
+    const unique = Array.from(new Set(insurers.map(s => s.trim()).filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    localStorage.setItem(key, JSON.stringify(unique));
+  } catch (e) {
+    console.error('Failed to save registered insurers:', e);
+  }
+}
+
+export function addRegisteredInsurer(name: string, userId?: string | null): string[] {
+  const trimmed = (name || '').trim();
+  if (!trimmed) return loadRegisteredInsurers(userId);
+  const current = loadRegisteredInsurers(userId);
+  if (!current.some(item => item.toLowerCase() === trimmed.toLowerCase())) {
+    current.push(trimmed);
+    const sorted = current.sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    saveRegisteredInsurers(sorted, userId);
+    return sorted;
+  }
+  return current;
+}
+
+export function deleteRegisteredInsurer(name: string, userId?: string | null): string[] {
+  const trimmed = (name || '').trim().toLowerCase();
+  const current = loadRegisteredInsurers(userId);
+  const filtered = current.filter(item => item.toLowerCase() !== trimmed);
+  saveRegisteredInsurers(filtered, userId);
+  return filtered;
+}
+
+export function resetRegisteredInsurers(userId?: string | null): string[] {
+  saveRegisteredInsurers(DEFAULT_MAJOR_INSURERS, userId);
+  return DEFAULT_MAJOR_INSURERS;
+}
+
+/**
+ * Returns only the seguradoras that the user actually registered or has in their active clients list.
+ */
+export function getAvailableInsurers(clients: Client[] = [], userId?: string | null): string[] {
+  const registered = loadRegisteredInsurers(userId);
+  const fromClients = clients
+    .map(c => c.insuranceCompany ? c.insuranceCompany.trim() : '')
+    .filter(Boolean);
+
+  const merged = new Map<string, string>();
+
+  // Add user explicitly registered insurers
+  registered.forEach(ins => {
+    if (ins) merged.set(ins.toLowerCase(), ins);
+  });
+
+  // Add insurers from clients
+  fromClients.forEach(ins => {
+    if (ins && !merged.has(ins.toLowerCase())) {
+      merged.set(ins.toLowerCase(), ins);
+    }
+  });
+
+  return Array.from(merged.values()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
 
 export function getUserProfileKey(userId: string): string {

@@ -699,25 +699,36 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <span>Seguradoras na sua Carteira</span>
             </h3>
 
-            <div className="space-y-3">
-              {topInsurers.map(([name, count]) => {
-                const pct = Math.round((count / (clients.length || 1)) * 100);
-                return (
-                  <div key={name}>
-                    <div className="flex justify-between text-xs font-semibold mb-1">
-                      <span className="text-slate-800 dark:text-slate-200">{name}</span>
-                      <span className="text-slate-500">{count} apólices ({pct}%)</span>
+            {topInsurers.length === 0 ? (
+              <div className="text-center py-6 px-3 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-dashed border-slate-200 dark:border-slate-700/60 my-1">
+                <p className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+                  Nenhuma seguradora cadastrada
+                </p>
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
+                  As seguradoras aparecerão aqui conforme você cadastrar novos clientes.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {topInsurers.map(([name, count]) => {
+                  const pct = Math.round((count / (clients.length || 1)) * 100);
+                  return (
+                    <div key={name}>
+                      <div className="flex justify-between text-xs font-semibold mb-1">
+                        <span className="text-slate-800 dark:text-slate-200">{name}</span>
+                        <span className="text-slate-500">{count} apólices ({pct}%)</span>
+                      </div>
+                      <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
+                        <div
+                          className="bg-cyan-600 h-full rounded-full transition-all"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
-                      <div
-                        className="bg-cyan-600 h-full rounded-full transition-all"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
         </div>

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   X, 
   Calendar, 
@@ -29,6 +29,7 @@ import {
   getBirthdayWhatsAppMessage,
   calculateExactAge
 } from '../utils/insuranceUtils';
+import { ConfirmationModal } from './ConfirmationModal';
 
 interface ClientDetailModalProps {
   client: Client | null;
@@ -49,6 +50,8 @@ export const ClientDetailModal: React.FC<ClientDetailModalProps> = ({
   onViewDocument,
   currentUser
 }) => {
+  const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
+
   if (!isOpen || !client) return null;
 
   const daysRemaining = getDaysRemaining(client.endDate);
@@ -304,12 +307,8 @@ export const ClientDetailModal: React.FC<ClientDetailModalProps> = ({
         {/* Footer Actions */}
         <div className="px-6 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/40 flex items-center justify-between">
           <button
-            onClick={() => {
-              if (confirm(`Deseja realmente excluir o cadastro de ${client.name}?`)) {
-                onDelete(client.id);
-                onClose();
-              }
-            }}
+            type="button"
+            onClick={() => setIsConfirmDeleteOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs font-medium transition-colors cursor-pointer"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -337,6 +336,27 @@ export const ClientDetailModal: React.FC<ClientDetailModalProps> = ({
         </div>
 
       </div>
+
+      {/* Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={isConfirmDeleteOpen}
+        onClose={() => setIsConfirmDeleteOpen(false)}
+        onConfirm={() => {
+          onDelete(client.id);
+          setIsConfirmDeleteOpen(false);
+          onClose();
+        }}
+        title="Excluir Cliente"
+        description={
+          <div>
+            <span>Tem certeza que deseja excluir o cadastro de <strong>{client.name}</strong>?</span>
+            <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              Esta ação removerá permanentemente os dados deste segurado e seus documentos associados.
+            </div>
+          </div>
+        }
+        confirmButtonText="Excluir Cliente"
+      />
     </div>
   );
 };

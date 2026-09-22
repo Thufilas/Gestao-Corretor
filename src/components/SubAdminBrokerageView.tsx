@@ -15,19 +15,22 @@ import {
   RefreshCw,
   Crown,
   CheckCircle2,
-  Briefcase
+  Briefcase,
+  Trash2
 } from 'lucide-react';
 import { BrokerAccount, User } from '../types';
 import { 
   loadAllBrokers, 
   toggleBrokerStatus, 
-  updateBrokerAccount 
+  updateBrokerAccount,
+  deleteBrokerAccount
 } from '../services/adminService';
-import { fetchFirestoreUsersByBrokerage, isFirebaseConfigured } from '../services/firebase';
+import { fetchFirestoreUsersByBrokerage, isFirebaseConfigured, deleteUserFromFirestore } from '../services/firebase';
 import { formatCurrency, isSubAdmin } from '../utils/insuranceUtils';
 import { CreateBrokerModal } from './CreateBrokerModal';
 import { EditBrokerModal } from './EditBrokerModal';
 import { ResetPasswordModal } from './ResetPasswordModal';
+import { ConfirmationModal } from './ConfirmationModal';
 
 interface SubAdminBrokerageViewProps {
   currentUser: User | null;
@@ -44,6 +47,8 @@ export const SubAdminBrokerageView: React.FC<SubAdminBrokerageViewProps> = ({ cu
   const [brokerToEdit, setBrokerToEdit] = useState<BrokerAccount | null>(null);
   const [isResetPassOpen, setIsResetPassOpen] = useState(false);
   const [brokerForReset, setBrokerForReset] = useState<BrokerAccount | null>(null);
+  const [brokerToDelete, setBrokerToDelete] = useState<BrokerAccount | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (text: string) => {
@@ -175,6 +180,46 @@ export const SubAdminBrokerageView: React.FC<SubAdminBrokerageViewProps> = ({ cu
   const handleOpenReset = (broker: BrokerAccount) => {
     setBrokerForReset(broker);
     setIsResetPassOpen(true);
+  };
+
+  const handleRequestDeleteBroker = (broker: BrokerAccount) => {
+    if (!broker?.id) {
+      showToast('Erro: ID do corretor inválido.');
+      return;
+    }
+    if (currentUser?.id === broker.id || (currentUser as any)?.uid === broker.id) {
+      showToast('Você não pode excluir a sua própria conta ativa de gestor.');
+      return;
+    }
+    setBrokerToDelete(broker);
+  };
+
+  const handleConfirmDeleteBroker = async () => {
+    if (!brokerToDelete) return;
+    const { id: brokerId, name } = brokerToDelete;
+
+    try {
+      setIsDeleting(true);
+      // 1. Atualização reativa imediata na tabela
+      setBrokers(prev => prev.filter(b => b.id !== brokerId && (b as any).uid !== brokerId));
+
+      // 2. Remoção do LocalStorage
+      deleteBrokerAccount(brokerId);
+
+      // 3. Remoção do Firestore
+      if (isFirebaseConfigured()) {
+        await deleteUserFromFirestore(brokerId);
+      }
+
+      showToast(`Corretor "${name}" excluído da equipe.`);
+    } catch (err: any) {
+      console.error('Error deleting broker:', err);
+      showToast(`Erro ao excluir corretor: ${err?.message || 'Falha de conexão.'}`);
+      setBrokers(loadAllBrokers());
+    } finally {
+      setIsDeleting(false);
+      setBrokerToDelete(null);
+    }
   };
 
   const handleBrokerCreated = (newBroker: BrokerAccount) => {
@@ -475,22 +520,32 @@ export const SubAdminBrokerageView: React.FC<SubAdminBrokerageViewProps> = ({ cu
                           {isSelf ? (
                             <span 
                               className="p-1.5 text-slate-300 dark:text-slate-600 cursor-not-allowed"
-                              title="Você não pode bloquear a sua própria conta de gestor"
+                              title="Você não pode bloquear ou excluir a sua própria conta de gestor"
                             >
                               <Lock className="w-4 h-4 opacity-40" />
                             </span>
                           ) : (
-                            <button
-                              onClick={() => handleToggleStatus(broker)}
-                              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                                isActive 
-                                  ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/60' 
-                                  : 'text-rose-600 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/60'
-                              }`}
-                              title={isActive ? 'Bloquear acesso do corretor' : 'Reativar conta do corretor'}
-                            >
-                              {isActive ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
-                            </button>
+                            <>
+                              <button
+                                onClick={() => handleToggleStatus(broker)}
+                                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                                  isActive 
+                                    ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/60' 
+                                    : 'text-rose-600 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/60'
+                                }`}
+                                title={isActive ? 'Bloquear acesso do corretor' : 'Reativar conta do corretor'}
+                              >
+                                {isActive ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+                              </button>
+
+                              <button
+                                onClick={() => handleRequestDeleteBroker(broker)}
+                                className="p-1.5 rounded-lg text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/60 transition-colors cursor-pointer"
+                                title={`Excluir ${broker.name} da equipe`}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </>
                           )}
                         </div>
                       </td>
@@ -533,6 +588,27 @@ export const SubAdminBrokerageView: React.FC<SubAdminBrokerageViewProps> = ({ cu
         isOpen={isResetPassOpen}
         onClose={() => setIsResetPassOpen(false)}
         broker={brokerForReset}
+      />
+
+      {/* Confirmation Modal for Broker Deletion */}
+      <ConfirmationModal
+        isOpen={Boolean(brokerToDelete)}
+        onClose={() => {
+          setBrokerToDelete(null);
+          setIsDeleting(false);
+        }}
+        onConfirm={handleConfirmDeleteBroker}
+        isLoading={isDeleting}
+        title="Excluir Corretor da Equipe"
+        description={
+          <div>
+            <span>Tem certeza que deseja desvincular e excluir o corretor <strong>{brokerToDelete?.name}</strong> ({brokerToDelete?.email})?</span>
+            <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              Esta ação removerá o acesso do profissional e sincronizará com a base de dados.
+            </div>
+          </div>
+        }
+        confirmButtonText="Excluir Corretor"
       />
 
       {/* Toast Notification */}

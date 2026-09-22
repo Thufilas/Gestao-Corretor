@@ -34,7 +34,7 @@ import {
   deleteObject,
   FirebaseStorage 
 } from 'firebase/storage';
-import { User, Client, BrokerAccount, UserRole } from '../types';
+import { User, Client, BrokerAccount, UserRole, Brokerage } from '../types';
 import { loadUserProfile, saveUserProfile, loadCurrentUser, saveCurrentUser } from './storage';
 import { isUserAdmin, isMasterAdmin, isSubAdmin, getUserCorretoraId } from '../utils/insuranceUtils';
 
@@ -295,6 +295,217 @@ export async function saveUserProfileToFirestore(userId: string, data: Partial<U
   }
 }
 
+export async function deleteUserFromFirestore(userId: string): Promise<void> {
+  const db = getFirebaseFirestore();
+  if (!db || !userId) {
+    return;
+  }
+  try {
+    console.log(`[Firestore] Excluindo usuário ID '${userId}' da coleção 'users'...`);
+    const userDocRef = doc(db, 'users', userId);
+    const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, 2500));
+    await Promise.race([deleteDoc(userDocRef), timeoutPromise]);
+    console.log(`[Firestore] Documento do usuário '${userId}' processado.`);
+  } catch (err: any) {
+    console.warn(`[Firestore] Aviso ao excluir usuário '${userId}' do Firestore:`, err);
+  }
+}
+
+export async function deleteCorretoraFromFirestore(corretoraId: string): Promise<void> {
+  const db = getFirebaseFirestore();
+  if (!db || !corretoraId) {
+    return;
+  }
+  try {
+    console.log(`[Firestore] Excluindo corretora ID '${corretoraId}' do Firestore...`);
+    const docRef1 = doc(db, 'corretoras', corretoraId);
+    const docRef2 = doc(db, 'brokerages', corretoraId);
+    
+    const deletePromise = Promise.allSettled([
+      deleteDoc(docRef1),
+      deleteDoc(docRef2)
+    ]);
+    const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, 2500));
+    await Promise.race([deletePromise, timeoutPromise]);
+    console.log(`[Firestore] Corretora '${corretoraId}' processada.`);
+  } catch (err: any) {
+    console.warn(`[Firestore] Aviso ao excluir corretora '${corretoraId}' do Firestore:`, err);
+  }
+}
+
+// Alias for backwards compatibility
+export const deleteBrokerageFromFirestore = deleteCorretoraFromFirestore;
+
+export async function fetchFirestoreBrokerages(): Promise<Brokerage[]> {
+  const db = getFirebaseFirestore();
+  if (!db) return [];
+  try {
+    const list: Brokerage[] = [];
+    const [snap1, snap2] = await Promise.allSettled([
+      getDocs(collection(db, 'corretoras')),
+      getDocs(collection(db, 'brokerages'))
+    ]);
+
+    if (snap1.status === 'fulfilled') {
+      snap1.value.forEach(docSnap => {
+        const d = docSnap.data();
+        list.push({
+          id: docSnap.id,
+          name: d.name || d.nome || 'Corretora',
+          subAdminId: d.subAdminId,
+          subAdminName: d.subAdminName,
+          subAdminEmail: d.subAdminEmail,
+          createdAt: d.createdAt || new Date().toISOString()
+        });
+      });
+    }
+
+    if (snap2.status === 'fulfilled') {
+      snap2.value.forEach(docSnap => {
+        if (!list.some(b => b.id === docSnap.id)) {
+          const d = docSnap.data();
+          list.push({
+            id: docSnap.id,
+            name: d.name || d.nome || 'Corretora',
+            subAdminId: d.subAdminId,
+            subAdminName: d.subAdminName,
+            subAdminEmail: d.subAdminEmail,
+            createdAt: d.createdAt || new Date().toISOString()
+          });
+        }
+      });
+    }
+
+    return list;
+  } catch (err) {
+    console.warn('[Firestore] Error fetching brokerages:', err);
+    return [];
+  }
+}
+
+export function subscribeToFirestoreUsers(
+  currentUser: User | null,
+  onUpdate: (users: User[]) => void
+): (() => void) {
+  const db = getFirebaseFirestore();
+  if (!db || !currentUser) {
+    return () => {};
+  }
+
+  try {
+    const usersCol = collection(db, 'users');
+    const isMaster = isMasterAdmin(currentUser);
+    const isSub = isSubAdmin(currentUser);
+    const corretoraId = getUserCorretoraId(currentUser);
+
+    let q;
+    if (isMaster) {
+      q = query(usersCol);
+    } else if (isSub && corretoraId) {
+      q = query(usersCol, where('corretora_id', '==', corretoraId));
+    } else {
+      q = query(usersCol, where('email', '==', currentUser.email));
+    }
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const results: User[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          const rawRole = data.role || data.userRole;
+          let normRole: UserRole = 'broker';
+          if (rawRole === 'MASTER' || rawRole === 'ADMIN' || rawRole === 'admin') {
+            normRole = 'admin';
+          } else if (rawRole === 'SUB_ADMIN' || rawRole === 'subadmin') {
+            normRole = 'subadmin';
+          } else {
+            normRole = 'broker';
+          }
+
+          results.push({
+            id: docSnap.id,
+            name: data.nome || data.name || 'Corretor',
+            firstName: data.firstName || (data.name ? data.name.split(/\s+/)[0] : 'Corretor'),
+            lastName: data.lastName !== undefined ? data.lastName : (data.name ? data.name.split(/\s+/).slice(1).join(' ') : ''),
+            email: data.email || '',
+            brokerageName: data.brokerageName || 'Corretora de Seguros',
+            brokerageId: data.corretora_id || data.brokerageId,
+            corretora_id: data.corretora_id || data.brokerageId,
+            susep: data.susep || '',
+            role: normRole,
+            isAdmin: normRole === 'admin' || normRole === 'subadmin',
+            status: data.status === 'inativo' || data.status === 'inactive' ? 'inactive' : 'active',
+            createdAt: data.createdAt || new Date().toISOString()
+          });
+        });
+        onUpdate(results);
+      },
+      (error) => {
+        console.warn('[Firestore] subscribeToFirestoreUsers error:', error);
+      }
+    );
+
+    return unsubscribe;
+  } catch (err) {
+    console.warn('[Firestore] Failed to attach users snapshot listener:', err);
+    return () => {};
+  }
+}
+
+export async function saveCorretoraToFirestore(brokerage: Brokerage): Promise<void> {
+  const db = getFirebaseFirestore();
+  if (!db || !brokerage?.id) return;
+  try {
+    const docRef1 = doc(db, 'corretoras', brokerage.id);
+    await setDoc(docRef1, brokerage, { merge: true });
+    const docRef2 = doc(db, 'brokerages', brokerage.id);
+    await setDoc(docRef2, brokerage, { merge: true });
+    console.log(`[Firestore] Corretora '${brokerage.name}' salva com sucesso.`);
+  } catch (err) {
+    console.warn('Could not save corretora to Firestore:', err);
+  }
+}
+
+export const saveBrokerageToFirestore = saveCorretoraToFirestore;
+
+/**
+ * Insurers Management Firestore API
+ */
+export async function fetchFirestoreInsurers(): Promise<string[] | null> {
+  const db = getFirebaseFirestore();
+  if (!db) return null;
+  try {
+    const docRef = doc(db, 'settings', 'insurers');
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      if (Array.isArray(data?.list) && data.list.length > 0) {
+        return data.list;
+      }
+    }
+    return null;
+  } catch (err) {
+    console.warn('[Firestore] Error fetching insurers from settings:', err);
+    return null;
+  }
+}
+
+export async function saveInsurersToFirestore(insurers: string[]): Promise<void> {
+  const db = getFirebaseFirestore();
+  if (!db) return;
+  try {
+    const docRef = doc(db, 'settings', 'insurers');
+    await setDoc(docRef, {
+      list: insurers,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+    console.log('[Firestore] Lista de seguradoras salva no Firestore.');
+  } catch (err) {
+    console.warn('[Firestore] Error saving insurers to Firestore:', err);
+  }
+}
+
 /**
  * Multi-Tenant Firestore Query: Fetch users filtered strictly by role and brokerage.
  * - Master Admin: Has access to all users across all brokerages.
@@ -449,7 +660,8 @@ export async function deleteClientFromFirestore(clientId: string): Promise<void>
 
   try {
     const clientRef = doc(db, 'clients', clientId);
-    await deleteDoc(clientRef);
+    const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, 2500));
+    await Promise.race([deleteDoc(clientRef), timeoutPromise]);
   } catch (err) {
     console.warn('Error deleting client from Firestore:', err);
   }
