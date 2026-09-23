@@ -1,4 +1,8 @@
 import { Client, User, PolicyDocument } from '../types';
+import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject, FirebaseStorage } from 'firebase/storage';
+import { getFirebaseApp, storage, getFirebaseStorage } from './firebase';
+
+export { storage };
 
 const DB_NAME = 'GestaoCorretorDB';
 const DB_VERSION = 1;
@@ -392,5 +396,72 @@ export function saveTheme(theme: 'light' | 'dark'): void {
     }
   } catch (e) {
     console.error('Failed to save theme:', e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Google Cloud Storage / Firebase Storage Integration
+// ---------------------------------------------------------------------------
+
+/**
+ * Instancia o Storage direcionando explicitamente para o bucket padrão nativo do Firebase
+ */
+export function getGCSInstance(): FirebaseStorage | null {
+  const app = getFirebaseApp();
+  if (!app) return null;
+  // Utiliza o bucket padrão nativo do Firebase
+  return getStorage(app, 'gs://gestaocorretor-eafd3.firebasestorage.app');
+}
+
+/**
+ * Envia um arquivo diretamente para o bucket nativo do Firebase Storage e retorna a URL de download
+ */
+export async function uploadFileToGCS(file: File, folder: string = 'apolices'): Promise<string> {
+  const app = getFirebaseApp();
+  let activeStorage = getGCSInstance() || getFirebaseStorage();
+  if (!activeStorage) {
+    throw new Error('Não foi possível conectar ao Firebase Storage.');
+  }
+
+  // Gera um nome único para o arquivo
+  const timestamp = Date.now();
+  const sanitizedFileName = file.name.replace(/\s+/g, '_');
+  const nomeDoArquivo = `${timestamp}_${sanitizedFileName}`;
+
+  const storageRef = ref(activeStorage, `${folder}/` + nomeDoArquivo);
+  
+  try {
+    // Primeira tentativa de upload
+    const snapshot = await uploadBytes(storageRef, file);
+    const downloadUrl = await getDownloadURL(snapshot.ref);
+    return downloadUrl;
+  } catch (err) {
+    console.warn('[Storage] Primeira tentativa de upload no bucket falhou, tentando reconexão nativa:', err);
+    // Tenta sincronizar novamente usando a referência padrão atualizada
+    if (app) {
+      const fallbackStorage = getStorage(app);
+      const fallbackRef = ref(fallbackStorage, `${folder}/` + nomeDoArquivo);
+      const retrySnapshot = await uploadBytes(fallbackRef, file);
+      return await getDownloadURL(retrySnapshot.ref);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Exclui um arquivo do bucket através de sua URL ou caminho
+ */
+export async function deleteFileFromGCS(fileUrlOrPath: string): Promise<void> {
+  const activeStorage = getGCSInstance() || getFirebaseStorage();
+  if (!activeStorage || !fileUrlOrPath) return;
+
+  try {
+    let cleanPath = fileUrlOrPath
+      .replace(/^gs:\/\/gestaocorretor-eafd3\.firebasestorage\.app\//, '')
+      .replace(/^gs:\/\/gestaocorretor-docs\//, '');
+    const storageRef = ref(activeStorage, cleanPath);
+    await deleteObject(storageRef);
+  } catch (error) {
+    console.error('Erro ao remover arquivo do Firebase Storage:', error);
   }
 }

@@ -565,11 +565,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                           <div className="flex items-center gap-1.5">
                             {/* Shortcut to View/Download Policy Document */}
-                            {client.document ? (
+                            {(client.apoliceUrl || client.document?.storageUrl || client.document?.dataUrl || client.document) ? (
                               <button
-                                onClick={() => onViewDocument(client)}
+                                onClick={() => {
+                                  const directUrl = client.apoliceUrl || client.document?.storageUrl || client.document?.dataUrl;
+                                  if (directUrl) {
+                                    window.open(directUrl, '_blank', 'noopener,noreferrer');
+                                  } else {
+                                    onViewDocument(client);
+                                  }
+                                }}
                                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer shadow-2xs"
-                                title="Visualizar ou baixar PDF da apólice anexada"
+                                title="Visualizar apólice em nova aba"
                               >
                                 <FileText className="w-3.5 h-3.5 text-rose-500" />
                                 <span>Ver Apólice</span>

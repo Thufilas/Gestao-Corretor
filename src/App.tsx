@@ -154,6 +154,11 @@ export default function App() {
   };
 
   const handleViewDocument = (client: Client) => {
+    const directUrl = client.apoliceUrl || client.document?.storageUrl || client.document?.dataUrl;
+    if (directUrl) {
+      window.open(directUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
     if (client.document) {
       setDocToView(client.document);
       setDocClientName(client.name);
@@ -169,13 +174,21 @@ export default function App() {
     if (clientToEdit) {
       const updatedList = clients.map(c => {
         if (c.id === clientToEdit.id) {
+          const hasDocument = Boolean(clientData.document);
+          const hasApoliceUrl = Boolean(clientData.apoliceUrl && clientData.apoliceUrl.trim());
           const updated: Client = {
             ...c,
             ...clientData,
+            document: hasDocument ? clientData.document : undefined,
+            apoliceUrl: (hasDocument || hasApoliceUrl) ? (clientData.apoliceUrl || clientData.document?.storageUrl) : undefined,
             updatedAt: now
           };
+          if (!hasDocument && !hasApoliceUrl) {
+            delete (updated as any).document;
+            delete (updated as any).apoliceUrl;
+          }
           if (isFirebaseConfigured()) {
-            saveClientToFirestore(updated).catch(err => console.warn('Error saving client update to Firestore:', err));
+            saveClientToFirestore(updated, currentUser).catch(err => console.warn('Error saving client update to Firestore:', err));
           }
           return updated;
         }
@@ -192,26 +205,78 @@ export default function App() {
       const updatedList = [newClient, ...clients];
       updateClients(updatedList);
       if (isFirebaseConfigured()) {
-        saveClientToFirestore(newClient).catch(err => console.warn('Error saving new client to Firestore:', err));
+        saveClientToFirestore(newClient, currentUser).catch(err => console.warn('Error saving new client to Firestore:', err));
       }
     }
     setIsClientModalOpen(false);
     setClientToEdit(null);
   };
 
+  const handleDeleteClientPolicy = async (client: Client) => {
+    if (!window.confirm(`Deseja realmente excluir o documento de apólice do cliente "${client.name}"?`)) {
+      return;
+    }
+
+    const pathOrUrl = client.apoliceUrl || client.document?.storagePath || client.document?.storageUrl;
+    if (client.document) {
+      try {
+        await deleteDocumentFile(client.document.id);
+      } catch (e) {
+        console.warn('Error deleting local doc file:', e);
+      }
+    }
+
+    if (isFirebaseConfigured() && pathOrUrl) {
+      deletePolicyFromFirebaseStorage(pathOrUrl).catch(e => console.warn('Error deleting policy from storage:', e));
+    }
+
+    const updatedList = clients.map(c => {
+      if (c.id === client.id) {
+        const updated: Client = {
+          ...c,
+          document: undefined,
+          apoliceUrl: undefined,
+          updatedAt: new Date().toISOString()
+        };
+        delete (updated as any).document;
+        delete (updated as any).apoliceUrl;
+        if (isFirebaseConfigured()) {
+          saveClientToFirestore(updated, currentUser).catch(err => console.warn('Error saving updated client to Firestore:', err));
+        }
+        return updated;
+      }
+      return c;
+    });
+
+    updateClients(updatedList);
+
+    if (clientForDetail && clientForDetail.id === client.id) {
+      const updatedDetail: Client = {
+        ...clientForDetail,
+        document: undefined,
+        apoliceUrl: undefined
+      };
+      delete (updatedDetail as any).document;
+      delete (updatedDetail as any).apoliceUrl;
+      setClientForDetail(updatedDetail);
+    }
+  };
+
   const handleDeleteClient = async (clientId: string) => {
     const client = clients.find(c => c.id === clientId);
     if (!client) return;
 
+    const pathOrUrl = client.apoliceUrl || client.document?.storagePath || client.document?.storageUrl;
     if (client.document) {
       try {
         await deleteDocumentFile(client.document.id);
-        if (isFirebaseConfigured() && client.document.storagePath) {
-          await deletePolicyFromFirebaseStorage(client.document.storagePath);
-        }
       } catch (e) {
         console.warn('Error deleting doc files:', e);
       }
+    }
+
+    if (isFirebaseConfigured() && pathOrUrl) {
+      deletePolicyFromFirebaseStorage(pathOrUrl).catch(e => console.warn('Error deleting policy from storage:', e));
     }
 
     const updated = clients.filter(c => c.id !== clientId);
@@ -366,6 +431,7 @@ export default function App() {
           handleDeleteClient(id);
         }}
         onViewDocument={handleViewDocument}
+        onDeletePolicy={handleDeleteClientPolicy}
       />
 
       <DocumentViewerModal

@@ -41,7 +41,8 @@ import {
   parseFirebaseStorageError,
   FirebaseStorageDiagnosticDetail,
   getFirebaseConfig,
-  RECOMMENDED_STORAGE_RULES_PROD
+  RECOMMENDED_STORAGE_RULES_PROD,
+  CLOUD_STORAGE_BUCKET_NAME
 } from '../services/firebase';
 import { FirebaseTroubleshootModal } from './FirebaseTroubleshootModal';
 
@@ -77,6 +78,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({
   const [clientType, setClientType] = useState<ClientType>('Novo');
   const [notes, setNotes] = useState('');
   const [document, setDocument] = useState<PolicyDocument | undefined>(undefined);
+  const [isDocumentRemoved, setIsDocumentRemoved] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [storageDiagnostic, setStorageDiagnostic] = useState<FirebaseStorageDiagnosticDetail | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -103,6 +105,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({
   useEffect(() => {
     const list = loadRegisteredInsurers(currentUserId);
     setRegisteredInsurers(list);
+    setIsDocumentRemoved(false);
 
     if (clientToEdit) {
       setName(clientToEdit.name);
@@ -132,7 +135,20 @@ export const ClientModal: React.FC<ClientModalProps> = ({
       setCommissionRate(clientToEdit.commissionRate);
       setClientType(clientToEdit.clientType);
       setNotes(clientToEdit.notes || '');
-      setDocument(clientToEdit.document);
+      if (clientToEdit.document) {
+        setDocument(clientToEdit.document);
+      } else if (clientToEdit.apoliceUrl) {
+        setDocument({
+          id: `doc-${clientToEdit.id}`,
+          name: `Apolice_${(clientToEdit.name || 'documento').replace(/\s+/g, '_')}.pdf`,
+          size: 0,
+          type: 'application/pdf',
+          uploadedAt: clientToEdit.updatedAt || clientToEdit.createdAt || new Date().toISOString(),
+          storageUrl: clientToEdit.apoliceUrl
+        });
+      } else {
+        setDocument(undefined);
+      }
     } else {
       // Defaults for a new client
       const today = new Date().toISOString().split('T')[0];
@@ -195,6 +211,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setIsDocumentRemoved(false);
     setPendingRetryFile(file);
     setUploadError(null);
     setStorageDiagnostic(null);
@@ -235,16 +252,27 @@ export const ClientModal: React.FC<ClientModalProps> = ({
             (pct) => setUploadProgress(pct)
           );
 
-          storageUrl = uploadResult.downloadUrl;
-          storagePath = uploadResult.storagePath;
-          setStorageDiagnostic(null);
+          if (uploadResult.downloadUrl) {
+            storageUrl = uploadResult.downloadUrl;
+            storagePath = uploadResult.storagePath;
+            setStorageDiagnostic(null);
+            setUploadError(null);
+          } else if (uploadResult.isLocalOnly) {
+            const config = getFirebaseConfig();
+            const parsed = parseFirebaseStorageError(
+              { code: 'storage/retry-limit-exceeded' },
+              uploadResult.bucketUsed || config?.storageBucket || CLOUD_STORAGE_BUCKET_NAME
+            );
+            setStorageDiagnostic(parsed);
+            setUploadError(null);
+          }
         } catch (fbErr) {
           console.warn('Firebase Storage upload failed, falling back to local storage:', fbErr);
           const config = getFirebaseConfig();
           const parsed = (fbErr as unknown as { diagnostic?: FirebaseStorageDiagnosticDetail })?.diagnostic 
-            || parseFirebaseStorageError(fbErr, config?.storageBucket || '');
+            || parseFirebaseStorageError(fbErr, config?.storageBucket || CLOUD_STORAGE_BUCKET_NAME);
           setStorageDiagnostic(parsed);
-          setUploadError(`${parsed.title} (${parsed.code})`);
+          setUploadError(null);
         }
       }
 
@@ -287,38 +315,51 @@ export const ClientModal: React.FC<ClientModalProps> = ({
         (pct) => setUploadProgress(pct)
       );
 
-      const updatedDoc: PolicyDocument = {
-        ...document,
-        storageUrl: uploadResult.downloadUrl,
-        storagePath: uploadResult.storagePath
-      };
+      if (uploadResult.downloadUrl) {
+        const updatedDoc: PolicyDocument = {
+          ...document,
+          storageUrl: uploadResult.downloadUrl,
+          storagePath: uploadResult.storagePath
+        };
 
-      await saveDocumentFile(updatedDoc);
-      setDocument(updatedDoc);
-      setStorageDiagnostic(null);
-      setUploadError(null);
+        await saveDocumentFile(updatedDoc);
+        setDocument(updatedDoc);
+        setStorageDiagnostic(null);
+        setUploadError(null);
+      } else if (uploadResult.isLocalOnly) {
+        const config = getFirebaseConfig();
+        const parsed = parseFirebaseStorageError(
+          { code: 'storage/retry-limit-exceeded' },
+          uploadResult.bucketUsed || config?.storageBucket || CLOUD_STORAGE_BUCKET_NAME
+        );
+        setStorageDiagnostic(parsed);
+        setUploadError(null);
+      }
       setUploadProgress(100);
     } catch (retryErr) {
-      console.error('Retry failed:', retryErr);
+      console.warn('Retry sync warning:', retryErr);
       const config = getFirebaseConfig();
       const parsed = (retryErr as unknown as { diagnostic?: FirebaseStorageDiagnosticDetail })?.diagnostic 
-        || parseFirebaseStorageError(retryErr, config?.storageBucket || '');
+        || parseFirebaseStorageError(retryErr, config?.storageBucket || CLOUD_STORAGE_BUCKET_NAME);
       setStorageDiagnostic(parsed);
-      setUploadError(`${parsed.title} (${parsed.code})`);
+      setUploadError(null);
     } finally {
       setIsUploading(false);
     }
   };
 
   const handleRemoveDocument = async () => {
-    if (document?.storagePath && isFirebaseConfigured()) {
-      try {
-        await deletePolicyFromFirebaseStorage(document.storagePath);
-      } catch (err) {
+    const pathToPurge = document?.storagePath || document?.storageUrl || clientToEdit?.apoliceUrl;
+    if (pathToPurge && isFirebaseConfigured()) {
+      deletePolicyFromFirebaseStorage(pathToPurge).catch(err => {
         console.warn('Could not delete from Firebase Storage:', err);
-      }
+      });
     }
     setDocument(undefined);
+    setIsDocumentRemoved(true);
+    setPendingRetryFile(null);
+    setStorageDiagnostic(null);
+    setUploadError(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -344,6 +385,10 @@ export const ClientModal: React.FC<ClientModalProps> = ({
       return;
     }
 
+    const effectiveApoliceUrl = isDocumentRemoved
+      ? undefined
+      : (document?.storageUrl || document?.dataUrl || (document ? clientToEdit?.apoliceUrl : undefined));
+
     const updatedClient: Client = {
       id: clientToEdit ? clientToEdit.id : `cli-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
       name: name.trim(),
@@ -359,7 +404,8 @@ export const ClientModal: React.FC<ClientModalProps> = ({
       commissionAmount: calculatedCommissionAmount,
       clientType,
       notes: notes.trim(),
-      document,
+      document: isDocumentRemoved ? undefined : document,
+      apoliceUrl: effectiveApoliceUrl,
       createdAt: clientToEdit ? clientToEdit.createdAt : new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };

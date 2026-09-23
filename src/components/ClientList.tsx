@@ -606,11 +606,18 @@ export const ClientList: React.FC<ClientListProps> = ({
 
                       {/* Anexo da Apólice */}
                       <td className="px-3 py-3.5 text-center whitespace-nowrap">
-                        {client.document ? (
+                        {(client.apoliceUrl || client.document?.storageUrl || client.document?.dataUrl || client.document) ? (
                           <button
-                            onClick={() => onViewDocument(client)}
+                            onClick={() => {
+                              const directUrl = client.apoliceUrl || client.document?.storageUrl || client.document?.dataUrl;
+                              if (directUrl) {
+                                window.open(directUrl, '_blank', 'noopener,noreferrer');
+                              } else {
+                                onViewDocument(client);
+                              }
+                            }}
                             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-[11px] border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer shadow-2xs"
-                            title={`Visualizar apólice: ${client.document.name}`}
+                            title={`Visualizar apólice: ${client.document?.name || client.name}`}
                           >
                             <FileText className="w-3.5 h-3.5 text-rose-500 shrink-0" />
                             <span>PDF</span>

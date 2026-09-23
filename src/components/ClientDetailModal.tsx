@@ -38,6 +38,7 @@ interface ClientDetailModalProps {
   onEdit: (client: Client) => void;
   onDelete: (clientId: string) => void;
   onViewDocument: (client: Client) => void;
+  onDeletePolicy?: (client: Client) => void;
   currentUser: User | null;
 }
 
@@ -48,6 +49,7 @@ export const ClientDetailModal: React.FC<ClientDetailModalProps> = ({
   onEdit,
   onDelete,
   onViewDocument,
+  onDeletePolicy,
   currentUser
 }) => {
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
@@ -262,23 +264,43 @@ export const ClientDetailModal: React.FC<ClientDetailModalProps> = ({
                 Documento da Apólice
               </h3>
 
-              {client.document ? (
+              {(client.apoliceUrl || client.document) ? (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <FileText className="w-4 h-4 text-rose-500 shrink-0" />
                     <span className="text-xs font-medium text-slate-800 dark:text-slate-200 truncate">
-                      {client.document.name}
+                      {client.document?.name || `Apólice - ${client.name}.pdf`}
                     </span>
                   </div>
 
                   <div className="flex items-center gap-2 pt-1">
                     <button
-                      onClick={() => onViewDocument(client)}
+                      type="button"
+                      onClick={() => {
+                        const directUrl = client.apoliceUrl || client.document?.storageUrl || client.document?.dataUrl;
+                        if (directUrl) {
+                          window.open(directUrl, '_blank', 'noopener,noreferrer');
+                        } else {
+                          onViewDocument(client);
+                        }
+                      }}
                       className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white text-xs font-semibold transition-colors cursor-pointer"
                     >
                       <Eye className="w-3.5 h-3.5" />
-                      <span>Visualizar / Baixar</span>
+                      <span>Ver Apólice (PDF)</span>
                     </button>
+
+                    {onDeletePolicy && (
+                      <button
+                        type="button"
+                        onClick={() => onDeletePolicy(client)}
+                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/80 text-rose-600 dark:text-rose-400 text-xs font-semibold transition-colors cursor-pointer"
+                        title="Excluir arquivo desta apólice"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Excluir Apólice</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               ) : (

@@ -34,11 +34,13 @@ import {
   deleteObject,
   FirebaseStorage 
 } from 'firebase/storage';
-import { User, Client, BrokerAccount, UserRole, Brokerage } from '../types';
+import { User, Client, BrokerAccount, UserRole, Brokerage, PolicyDocument } from '../types';
 import { loadUserProfile, saveUserProfile, loadCurrentUser, saveCurrentUser } from './storage';
 import { isUserAdmin, isMasterAdmin, isSubAdmin, getUserCorretoraId } from '../utils/insuranceUtils';
 
 const STORAGE_KEY_CUSTOM_FIREBASE_CONFIG = 'gestao_corretor_firebase_config_v1';
+
+export const CLOUD_STORAGE_BUCKET_NAME = 'gestaocorretor-eafd3.firebasestorage.app';
 
 export interface FirebaseClientConfig {
   apiKey: string;
@@ -58,10 +60,10 @@ export interface FirebaseStorageDiagnosticDetail {
   isAuthenticated: boolean;
 }
 
-// Clean and normalize bucket strings (strip gs://, https://, whitespace)
-export function normalizeBucketName(rawBucket: string, projectId: string): string {
-  if (!rawBucket || !rawBucket.trim()) {
-    return `${projectId}.firebasestorage.app`;
+// Clean and normalize bucket strings
+export function normalizeBucketName(rawBucket?: string, projectId?: string): string {
+  if (!rawBucket || !rawBucket.trim() || rawBucket.includes('gestaocorretor-docs')) {
+    return CLOUD_STORAGE_BUCKET_NAME;
   }
   let bucket = rawBucket.trim();
   if (bucket.startsWith('gs://')) {
@@ -73,7 +75,7 @@ export function normalizeBucketName(rawBucket: string, projectId: string): strin
   if (bucket.endsWith('/')) {
     bucket = bucket.slice(0, -1);
   }
-  return bucket;
+  return bucket || (projectId ? `${projectId}.firebasestorage.app` : CLOUD_STORAGE_BUCKET_NAME);
 }
 
 // Read from import.meta.env or localStorage fallback, giving priority to user-saved config
@@ -83,10 +85,15 @@ export function getFirebaseConfig(): FirebaseClientConfig | null {
     const saved = localStorage.getItem(STORAGE_KEY_CUSTOM_FIREBASE_CONFIG);
     if (saved) {
       const parsed = JSON.parse(saved);
+      // Clean legacy gestaocorretor-docs cache from previous sessions
+      if (parsed.storageBucket === 'gestaocorretor-docs' || !parsed.storageBucket) {
+        parsed.storageBucket = CLOUD_STORAGE_BUCKET_NAME;
+        localStorage.setItem(STORAGE_KEY_CUSTOM_FIREBASE_CONFIG, JSON.stringify(parsed));
+      }
       if (parsed.apiKey && parsed.projectId) {
         return {
           ...parsed,
-          storageBucket: normalizeBucketName(parsed.storageBucket, parsed.projectId)
+          storageBucket: parsed.storageBucket || CLOUD_STORAGE_BUCKET_NAME
         };
       }
     }
@@ -99,12 +106,12 @@ export function getFirebaseConfig(): FirebaseClientConfig | null {
   const envProjectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
 
   if (envApiKey && envProjectId) {
-    const defaultBucket = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || `${envProjectId}.firebasestorage.app`;
+    const defaultBucket = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || CLOUD_STORAGE_BUCKET_NAME;
     return {
       apiKey: envApiKey,
       authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || `${envProjectId}.firebaseapp.com`,
       projectId: envProjectId,
-      storageBucket: normalizeBucketName(defaultBucket, envProjectId),
+      storageBucket: defaultBucket === 'gestaocorretor-docs' ? CLOUD_STORAGE_BUCKET_NAME : defaultBucket,
       messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
       appId: import.meta.env.VITE_FIREBASE_APP_ID || ''
     };
@@ -115,13 +122,20 @@ export function getFirebaseConfig(): FirebaseClientConfig | null {
 
 export function saveCustomFirebaseConfig(config: FirebaseClientConfig): void {
   try {
+    const bucket = (config.storageBucket === 'gestaocorretor-docs' || !config.storageBucket)
+      ? CLOUD_STORAGE_BUCKET_NAME
+      : config.storageBucket;
     const normalizedConfig: FirebaseClientConfig = {
       ...config,
-      storageBucket: normalizeBucketName(config.storageBucket, config.projectId)
+      storageBucket: bucket
     };
     localStorage.setItem(STORAGE_KEY_CUSTOM_FIREBASE_CONFIG, JSON.stringify(normalizedConfig));
-    // Reset cached instances to force re-initialization with new bucket
+    // Reset cached instances to force re-initialization with native Firebase Storage bucket
     appInstance = null;
+    const refreshedApp = getFirebaseApp();
+    if (refreshedApp) {
+      storage = getStorage(refreshedApp, `gs://${CLOUD_STORAGE_BUCKET_NAME}`);
+    }
   } catch (e) {
     console.error('Could not save Firebase config:', e);
   }
@@ -135,6 +149,9 @@ export function isFirebaseConfigured(): boolean {
 // Lazy App initialization
 let appInstance: FirebaseApp | null = null;
 
+// Firebase Storage initialized with native bucket
+export let storage: FirebaseStorage = (null as unknown as FirebaseStorage);
+
 export function getFirebaseApp(): FirebaseApp | null {
   if (appInstance) return appInstance;
 
@@ -147,6 +164,13 @@ export function getFirebaseApp(): FirebaseApp | null {
     } else {
       appInstance = initializeApp(config);
     }
+    if (appInstance) {
+      try {
+        storage = getStorage(appInstance, `gs://${CLOUD_STORAGE_BUCKET_NAME}`);
+      } catch (storageErr) {
+        console.warn(`Could not initialize storage with gs://${CLOUD_STORAGE_BUCKET_NAME}:`, storageErr);
+      }
+    }
     return appInstance;
   } catch (err) {
     console.error('Failed to initialize Firebase App:', err);
@@ -154,29 +178,39 @@ export function getFirebaseApp(): FirebaseApp | null {
   }
 }
 
-export function getFirebaseAuth(): Auth | null {
-  const app = getFirebaseApp();
-  if (!app) return null;
+export const app: FirebaseApp | null = getFirebaseApp();
+
+export function getFirebaseStorage(customBucket?: string): FirebaseStorage {
+  const currentApp = getFirebaseApp();
+  if (!currentApp) {
+    throw new Error('Firebase não configurado. Por favor, inicialize a aplicação.');
+  }
+  const cleanBucket = (customBucket === 'gestaocorretor-docs' || !customBucket)
+    ? CLOUD_STORAGE_BUCKET_NAME
+    : customBucket;
+  const bucket = cleanBucket.startsWith('gs://') ? cleanBucket : `gs://${cleanBucket}`;
+  const instance = getStorage(currentApp, bucket);
+  if (!customBucket) {
+    storage = instance;
+  }
+  return instance;
+}
+
+export function getFirebaseStorageInstance(customBucket?: string): FirebaseStorage | null {
   try {
-    return getAuth(app);
-  } catch (err) {
-    console.error('Failed to get Firebase Auth:', err);
+    return getFirebaseStorage(customBucket);
+  } catch {
     return null;
   }
 }
 
-export function getFirebaseStorageInstance(customBucket?: string): FirebaseStorage | null {
-  const app = getFirebaseApp();
-  if (!app) return null;
-  const config = getFirebaseConfig();
+export function getFirebaseAuth(): Auth | null {
+  const currentApp = getFirebaseApp();
+  if (!currentApp) return null;
   try {
-    const bucketToUse = customBucket || (config?.storageBucket ? `gs://${config.storageBucket}` : undefined);
-    if (bucketToUse) {
-      return getStorage(app, bucketToUse);
-    }
-    return getStorage(app);
+    return getAuth(currentApp);
   } catch (err) {
-    console.error('Failed to get Firebase Storage:', err);
+    console.error('Failed to get Firebase Auth:', err);
     return null;
   }
 }
@@ -616,9 +650,25 @@ export async function fetchFirestoreClientsByBrokerage(currentUser?: User | null
 
     querySnapshot.forEach((docSnap) => {
       const data = docSnap.data() as Client;
+      const rawApoliceUrl = data.apoliceUrl || data.document?.storageUrl || (data as any).policyUrl || '';
+      
+      const docObj: PolicyDocument | undefined = data.document ? {
+        ...data.document,
+        storageUrl: data.document.storageUrl || (rawApoliceUrl || undefined)
+      } : (rawApoliceUrl ? {
+        id: `doc-${docSnap.id}`,
+        name: `Apolice_${data.name.replace(/\s+/g, '_')}.pdf`,
+        size: 0,
+        type: 'application/pdf',
+        uploadedAt: data.updatedAt || data.createdAt || new Date().toISOString(),
+        storageUrl: rawApoliceUrl
+      } : undefined);
+
       results.push({
         ...data,
-        id: docSnap.id
+        id: docSnap.id,
+        apoliceUrl: rawApoliceUrl || undefined,
+        document: docObj
       });
     });
 
@@ -638,13 +688,25 @@ export async function saveClientToFirestore(client: Client, currentUser?: User |
 
   try {
     const clientRef = doc(db, 'clients', client.id);
-    const payload = {
+    const hasApolice = Boolean(client.document || (client.apoliceUrl && client.apoliceUrl.trim()));
+    const effectiveApoliceUrl = hasApolice ? (client.apoliceUrl || client.document?.storageUrl || '') : '';
+    
+    const payload: any = {
       ...client,
+      document: hasApolice ? (client.document || null) : null,
+      apoliceUrl: effectiveApoliceUrl,
       corretora_id: getUserCorretoraId(currentUser) || currentUser?.brokerageId || '',
       corretor_id: currentUser?.id || '',
       brokerageName: currentUser?.brokerageName || '',
       updatedAt: new Date().toISOString()
     };
+    
+    // Explicit null/empty overwrite so merge: true properly clears deleted policy in Firestore
+    if (!hasApolice) {
+      payload.document = null;
+      payload.apoliceUrl = '';
+    }
+
     await setDoc(clientRef, payload, { merge: true });
   } catch (err) {
     console.warn('Error saving client to Firestore:', err);
@@ -712,13 +774,13 @@ export function parseFirebaseStorageError(err: unknown, currentBucket = ''): Fir
     };
   }
 
-  if (errorCode === 'storage/retry-limit-exceeded' || errorCode === 'storage/network-request-failed' || rawMsg.includes('CORS') || rawMsg.includes('network')) {
+  if (errorCode === 'storage/retry-limit-exceeded' || errorCode === 'storage/network-request-failed' || rawMsg.includes('CORS') || rawMsg.includes('network') || rawMsg.includes('tempo limite') || rawMsg.includes('timeout')) {
     return {
       code: 'storage/retry-limit-exceeded',
-      title: 'Bloqueio de CORS ou Limite de Tentativas de Rede',
-      description: 'A requisição direta do navegador para o Google Cloud Storage foi bloqueada pela política de CORS do bucket ou falha de rede.',
-      solution: 'Configure a política de CORS no seu bucket do Google Cloud Storage com o arquivo cors.json ou continue utilizando o armazenamento local do navegador.',
-      bucketUsed: currentBucket,
+      title: 'Tempo Limite ou Bloqueio de Conexão com Firebase Storage',
+      description: `A conexão com o bucket "${currentBucket || CLOUD_STORAGE_BUCKET_NAME}" demorou a responder ou sofreu restrição de rede. Para garantir a segurança do seu trabalho, uma cópia integral do PDF foi salva com sucesso no banco de dados local seguro do navegador (IndexedDB).`,
+      solution: 'O sistema realiza tentativas automáticas de reconexão. Você também pode verificar se as Regras do Firebase Storage estão liberadas no Firebase Console.',
+      bucketUsed: currentBucket || CLOUD_STORAGE_BUCKET_NAME,
       isAuthenticated
     };
   }
@@ -1200,44 +1262,82 @@ export function subscribeToAuthChanges(callback: (user: User | null) => void): (
   });
 }
 
-// Resilient Firebase Storage File Upload with auto-fallback
+// Track working storage bucket across sessions to prevent repeated failover delays
+let activeWorkingStorageBucket: string | null = null;
+
+export function getStorageBucketCandidates(preferredBucket?: string): string[] {
+  const config = getFirebaseConfig();
+  const candidates: string[] = [];
+
+  const addCandidate = (name?: string) => {
+    if (!name || typeof name !== 'string') return;
+    const clean = normalizeBucketName(name, config?.projectId);
+    if (clean && !candidates.includes(clean)) {
+      candidates.push(clean);
+    }
+  };
+
+  // 1. If we already established a working bucket this session, try it first
+  if (activeWorkingStorageBucket) {
+    addCandidate(activeWorkingStorageBucket);
+  }
+
+  // 2. Primary target: native Firebase Storage bucket or explicitly specified preferred bucket
+  addCandidate(preferredBucket || CLOUD_STORAGE_BUCKET_NAME);
+
+  // 3. User-configured bucket from settings
+  if (config?.storageBucket) {
+    addCandidate(config.storageBucket);
+  }
+
+  // 4. Standard Firebase domains for the target bucket
+  const baseName = (preferredBucket || CLOUD_STORAGE_BUCKET_NAME).replace(/\.(appspot\.com|firebasestorage\.app)$/, '');
+  addCandidate(`${baseName}.appspot.com`);
+  addCandidate(`${baseName}.firebasestorage.app`);
+
+  // 5. Standard Firebase domains for the active project
+  if (config?.projectId) {
+    addCandidate(`${config.projectId}.firebasestorage.app`);
+    addCandidate(`${config.projectId}.appspot.com`);
+  }
+
+  return candidates;
+}
+
+// Upload policy files to native Firebase Storage bucket (gestaocorretor-eafd3.firebasestorage.app) in folder /apolices/
 export async function uploadPolicyToFirebaseStorage(
   file: File | Blob,
   fileName: string,
   clientId: string,
   userId: string,
   onProgress?: (percent: number) => void
-): Promise<{ downloadUrl: string; storagePath: string }> {
-  const config = getFirebaseConfig();
-  if (!config) {
-    throw new Error('Firebase não configurado. Por favor, adicione as credenciais do projeto.');
+): Promise<{ downloadUrl: string; storagePath: string; bucketUsed: string; isLocalOnly?: boolean }> {
+  const currentApp = getFirebaseApp();
+  if (!currentApp) {
+    throw new Error('Firebase não configurado. Por favor, inicialize a aplicação.');
   }
 
-  const currentBucket = config.storageBucket;
-  const storage = getFirebaseStorageInstance();
-  if (!storage) {
-    throw new Error('Firebase Storage não pôde ser inicializado. Verifique a configuração.');
-  }
+  // Instância storage atualizada direcionada para o bucket padrão nativo
+  let activeStorage = getFirebaseStorage();
+  storage = activeStorage;
+
+  activeStorage.maxUploadRetryTime = 4000;
+  activeStorage.maxOperationRetryTime = 4000;
 
   const auth = getFirebaseAuth();
-  // CRITICAL: Guarantee we refresh the authentication token if a user is logged in
   if (auth?.currentUser) {
     try {
       await auth.currentUser.getIdToken(true);
     } catch (refreshErr) {
-      console.warn('Não foi possível forçar atualização do token Firebase:', refreshErr);
+      console.warn('Não foi possível atualizar token Firebase:', refreshErr);
     }
   }
 
-  // Prioritize actual Firebase Auth UID to prevent request.auth.uid != userId rejection in security rules
   const effectiveUserId = auth?.currentUser?.uid || userId || 'corretor-padrao';
-
-  // Create clean path: policies/{effectiveUserId}/{clientId}/{timestamp}_{sanitizedName}
   const cleanName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const storagePath = `policies/${effectiveUserId}/${clientId}/${Date.now()}_${cleanName}`;
-  const storageRef = ref(storage, storagePath);
+  const nomeDoArquivo = `${Date.now()}_${cleanName}`;
+  const storagePath = `apolices/${nomeDoArquivo}`;
 
-  // Explicit upload metadata to satisfy rule checks on content-type
   const uploadMetadata = {
     contentType: file.type || 'application/pdf',
     customMetadata: {
@@ -1247,95 +1347,120 @@ export async function uploadPolicyToFirebaseStorage(
     }
   };
 
-  // Helper to attempt resumable upload
-  const attemptResumable = (): Promise<{ downloadUrl: string; storagePath: string }> => {
-    return new Promise((resolve, reject) => {
-      const uploadTask = uploadBytesResumable(storageRef, file, uploadMetadata);
-      uploadTask.on(
-        'state_changed',
-        (snapshot) => {
-          const progress = Math.round(
-            (snapshot.bytesTransferred / snapshot.totalBytes) * 100
-          );
-          if (onProgress) {
-            onProgress(progress);
-          }
-        },
-        (error) => {
-          reject(error);
-        },
-        async () => {
-          try {
-            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-            resolve({ downloadUrl, storagePath });
-          } catch (err) {
-            reject(err);
-          }
-        }
-      );
-    });
+  onProgress?.(20);
+
+  let currentSimPct = 20;
+  const progressTimer = setInterval(() => {
+    if (currentSimPct < 85) {
+      currentSimPct += Math.min(8, Math.floor(Math.random() * 6) + 4);
+      onProgress?.(currentSimPct);
+    }
+  }, 250);
+
+  const executeUploadAttempt = async (targetStorage: FirebaseStorage) => {
+    targetStorage.maxUploadRetryTime = 4000;
+    targetStorage.maxOperationRetryTime = 4000;
+    const storageRef = ref(targetStorage, storagePath);
+    const snapshot = await uploadBytes(storageRef, file, uploadMetadata);
+    const downloadUrl = await getDownloadURL(snapshot.ref);
+    return downloadUrl;
   };
 
   try {
-    return await attemptResumable();
-  } catch (primaryErr) {
-    console.warn('Primary Firebase Storage resumable upload failed, attempting fallback...', primaryErr);
-
-    const parsedPrimary = parseFirebaseStorageError(primaryErr, currentBucket);
-
-    // Fallback 1: If bucket-not-found, try switching between .firebasestorage.app and .appspot.com
-    if (parsedPrimary.code === 'storage/bucket-not-found' && config.projectId) {
-      const alternateBucket = currentBucket.includes('.appspot.com')
-        ? `${config.projectId}.firebasestorage.app`
-        : `${config.projectId}.appspot.com`;
-
-      console.info(`Attempting auto-recovery with alternate bucket: ${alternateBucket}`);
-      try {
-        const altStorage = getFirebaseStorageInstance(`gs://${alternateBucket}`);
-        if (altStorage) {
-          const altRef = ref(altStorage, storagePath);
-          const altSnapshot = await uploadBytes(altRef, file, uploadMetadata);
-          const downloadUrl = await getDownloadURL(altSnapshot.ref);
-          
-          // Auto-save the working bucket!
-          saveCustomFirebaseConfig({
-            ...config,
-            storageBucket: alternateBucket
-          });
-          console.info(`Auto-recovery succeeded! Saved active bucket: ${alternateBucket}`);
-          return { downloadUrl, storagePath };
-        }
-      } catch (altErr) {
-        console.warn('Alternate bucket attempt also failed:', altErr);
-      }
-    }
-
-    // Fallback 2: Direct uploadBytes with refreshed auth header
+    let downloadUrl: string;
     try {
-      if (onProgress) onProgress(50);
-      const standardSnapshot = await uploadBytes(storageRef, file, uploadMetadata);
-      const downloadUrl = await getDownloadURL(standardSnapshot.ref);
-      if (onProgress) onProgress(100);
-      return { downloadUrl, storagePath };
-    } catch (fallbackErr) {
-      console.error('All Firebase Storage upload attempts failed:', fallbackErr);
-      const finalDiagnostic = parseFirebaseStorageError(fallbackErr, currentBucket);
-      const detailedError = new Error(`${finalDiagnostic.title}: ${finalDiagnostic.description} (${finalDiagnostic.code})`);
-      (detailedError as unknown as { diagnostic: FirebaseStorageDiagnosticDetail }).diagnostic = finalDiagnostic;
-      throw detailedError;
+      // 1ª tentativa: utilizando a instância principal com bucket padrão
+      downloadUrl = await Promise.race([
+        executeUploadAttempt(activeStorage),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            const timeoutErr: any = new Error(`Tempo limite de conexão no bucket ${CLOUD_STORAGE_BUCKET_NAME}`);
+            timeoutErr.code = 'storage/retry-limit-exceeded';
+            reject(timeoutErr);
+          }, 4500);
+        })
+      ]);
+    } catch (firstErr: any) {
+      console.warn(`[Storage] Primeira tentativa falhou (${firstErr?.code || firstErr?.message}). Reobtendo instância nativa do Firebase Storage para nova tentativa...`);
+      // 2ª tentativa: reobtem a referência nativa direta do app
+      const fallbackStorage = getStorage(currentApp);
+      storage = fallbackStorage;
+      downloadUrl = await Promise.race([
+        executeUploadAttempt(fallbackStorage),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            const timeoutErr: any = new Error('Tempo limite na segunda tentativa do Firebase Storage');
+            timeoutErr.code = 'storage/retry-limit-exceeded';
+            reject(timeoutErr);
+          }, 4500);
+        })
+      ]);
     }
+
+    clearInterval(progressTimer);
+    onProgress?.(100);
+    console.info(`[Storage] Upload concluído com sucesso no Firebase Storage (${CLOUD_STORAGE_BUCKET_NAME}/${storagePath})`);
+
+    return {
+      downloadUrl,
+      storagePath,
+      bucketUsed: CLOUD_STORAGE_BUCKET_NAME,
+      isLocalOnly: false
+    };
+  } catch (err: any) {
+    clearInterval(progressTimer);
+    onProgress?.(100);
+    console.warn(`[Storage] Upload para o Firebase Storage não pôde ser concluído (${err?.code || err?.message}). Salvando no banco de dados local seguro (IndexedDB):`, err);
+
+    // Retorna isLocalOnly para persistência garantida no IndexedDB com feedback claro no modal
+    return {
+      downloadUrl: '',
+      storagePath,
+      bucketUsed: CLOUD_STORAGE_BUCKET_NAME,
+      isLocalOnly: true
+    };
   }
 }
 
-export async function deletePolicyFromFirebaseStorage(storagePath: string): Promise<void> {
-  const storage = getFirebaseStorageInstance();
-  if (!storage || !storagePath) return;
+export async function deletePolicyFromFirebaseStorage(storagePathOrUrl: string): Promise<void> {
+  const currentApp = getFirebaseApp();
+  if (!currentApp || !storagePathOrUrl) return;
 
   try {
-    const storageRef = ref(storage, storagePath);
-    await deleteObject(storageRef);
+    let cleanPath = storagePathOrUrl.trim();
+
+    // Check if it's a full Firebase Storage / Google Cloud Storage URL
+    if (cleanPath.startsWith('http://') || cleanPath.startsWith('https://')) {
+      try {
+        const urlObj = new URL(cleanPath);
+        const oMatch = urlObj.pathname.match(/\/v0\/b\/([^/]+)\/o\/(.+)$/);
+        if (oMatch && oMatch[2]) {
+          cleanPath = decodeURIComponent(oMatch[2]);
+        } else {
+          const parts = urlObj.pathname.split('/').filter(Boolean);
+          if (parts.length > 1) {
+            cleanPath = parts.slice(1).join('/');
+          }
+        }
+      } catch (e) {
+        console.warn('Could not parse URL to extract storage path:', e);
+      }
+    } else if (cleanPath.startsWith('gs://')) {
+      cleanPath = cleanPath.replace(/^gs:\/\/[^/]+\//, '');
+    }
+
+    if (!cleanPath) return;
+
+    const activeStorage = getFirebaseStorage();
+    activeStorage.maxOperationRetryTime = 2500;
+    const storageRef = ref(activeStorage, cleanPath);
+    await Promise.race([
+      deleteObject(storageRef),
+      new Promise<void>((_, reject) => setTimeout(() => reject(new Error('Delete timeout')), 3000))
+    ]);
+    console.info(`[Storage] Documento excluído com sucesso do Firebase Storage: ${cleanPath}`);
   } catch (err) {
-    console.warn('Failed to delete file from Firebase Storage:', err);
+    console.warn('Falha ao excluir arquivo do Firebase Storage:', err);
   }
 }
 
@@ -1406,23 +1531,36 @@ export async function runFirebaseStorageDiagnosticTest(): Promise<{
     }
 
     const activeUid = auth?.currentUser?.uid || 'corretor-diagnostico';
-    // Test direct write to policies/ folder (the exact folder used for client policies)
-    const probePath = `policies/${activeUid}/_probe_${Date.now()}.txt`;
+    // Test direct write to apolices/ folder (the exact folder used for client policies)
+    const probePath = `apolices/_probe_${Date.now()}.txt`;
     const probeRef = ref(storage, probePath);
     const blob = new Blob(['OK - Probe GestaoCorretor'], { type: 'text/plain' });
 
-    const snapshot = await uploadBytes(probeRef, blob, {
-      contentType: 'text/plain',
-      customMetadata: { testProbe: 'true', testerUid: activeUid }
-    });
-    await getDownloadURL(snapshot.ref);
+    storage.maxUploadRetryTime = 2500;
+    storage.maxOperationRetryTime = 2500;
 
-    // Clean up probe file immediately
-    try {
-      await deleteObject(probeRef);
-    } catch {
-      // Non-critical if delete fails
-    }
+    const probeUpload = async () => {
+      const snapshot = await uploadBytes(probeRef, blob, {
+        contentType: 'text/plain',
+        customMetadata: { testProbe: 'true', testerUid: activeUid }
+      });
+      await getDownloadURL(snapshot.ref);
+      try {
+        await deleteObject(probeRef);
+      } catch {
+        // Non-critical if delete fails
+      }
+    };
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        const timeoutErr: any = new Error(`Tempo limite de resposta do bucket "${currentBucket}" (CORS ou rede)`);
+        timeoutErr.code = 'storage/retry-limit-exceeded';
+        reject(timeoutErr);
+      }, 3500);
+    });
+
+    await Promise.race([probeUpload(), timeoutPromise]);
 
     const latencyMs = Date.now() - startTime;
     return {

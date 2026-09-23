@@ -506,14 +506,21 @@ export const AlertsView: React.FC<AlertsViewProps> = ({
                   {/* Actions Row */}
                   <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
-                      {client.document && (
+                      {(client.apoliceUrl || client.document?.storageUrl || client.document?.dataUrl || client.document) && (
                         <button
-                          onClick={() => onViewDocument(client)}
+                          onClick={() => {
+                            const directUrl = client.apoliceUrl || client.document?.storageUrl || client.document?.dataUrl;
+                            if (directUrl) {
+                              window.open(directUrl, '_blank', 'noopener,noreferrer');
+                            } else {
+                              onViewDocument(client);
+                            }
+                          }}
                           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800/90 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer shadow-2xs"
-                          title={`Visualizar apólice: ${client.document.name}`}
+                          title={`Visualizar apólice: ${client.document?.name || client.name}`}
                         >
                           <FileText className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-                          <span>Apólice</span>
+                          <span>Ver Apólice</span>
                         </button>
                       )}
 

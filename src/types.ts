@@ -29,6 +29,7 @@ export interface Client {
   clientType: ClientType; // 'Novo' | 'Renovação'
   notes?: string; // Comentários / Observações
   document?: PolicyDocument;
+  apoliceUrl?: string; // URL da apólice no Firebase Storage (bucket: gestaocorretor-eafd3.firebasestorage.app)
   createdAt: string;
   updatedAt: string;
 }

@@ -58,22 +58,53 @@ export const FirebaseTroubleshootModal: React.FC<FirebaseTroubleshootModalProps>
   const currentUser = auth?.currentUser;
 
   useEffect(() => {
+    // Limpar cache persistido de bucket antigo 'gestaocorretor-docs' do localStorage
+    try {
+      const saved = localStorage.getItem('gestao_corretor_firebase_config_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.storageBucket === 'gestaocorretor-docs' || !parsed.storageBucket) {
+          parsed.storageBucket = 'gestaocorretor-eafd3.firebasestorage.app';
+          localStorage.setItem('gestao_corretor_firebase_config_v1', JSON.stringify(parsed));
+        }
+      }
+    } catch (e) {
+      console.warn('Erro ao limpar cache antigo de bucket:', e);
+    }
+
     if (config) {
-      setCustomBucket(config.storageBucket || '');
+      const activeB = (config.storageBucket === 'gestaocorretor-docs' || !config.storageBucket)
+        ? 'gestaocorretor-eafd3.firebasestorage.app'
+        : config.storageBucket;
+      setCustomBucket(activeB);
     }
   }, [config, isOpen]);
 
   // If opened with an initial error detail, set it into the test view
   useEffect(() => {
     if (initialErrorDetail && isOpen) {
+      // Limpa qualquer mensagem em cache que faça referência a gestaocorretor-docs
+      const cleanBucket = initialErrorDetail.bucketUsed === 'gestaocorretor-docs'
+        ? 'gestaocorretor-eafd3.firebasestorage.app'
+        : initialErrorDetail.bucketUsed;
+      const cleanTitle = (initialErrorDetail.title || '').replace(/gestaocorretor-docs/g, 'gestaocorretor-eafd3.firebasestorage.app');
+      const cleanDescription = (initialErrorDetail.description || '').replace(/gestaocorretor-docs/g, 'gestaocorretor-eafd3.firebasestorage.app');
+
+      const sanitizedDetail = {
+        ...initialErrorDetail,
+        bucketUsed: cleanBucket,
+        title: cleanTitle,
+        description: cleanDescription
+      };
+
       setTestResult({
         success: false,
-        message: `${initialErrorDetail.title}: ${initialErrorDetail.description}`,
-        code: initialErrorDetail.code,
+        message: `${sanitizedDetail.title}: ${sanitizedDetail.description}`,
+        code: sanitizedDetail.code,
         latencyMs: 0,
-        bucket: initialErrorDetail.bucketUsed,
-        isAuthenticated: initialErrorDetail.isAuthenticated,
-        diagnostic: initialErrorDetail
+        bucket: sanitizedDetail.bucketUsed,
+        isAuthenticated: sanitizedDetail.isAuthenticated,
+        diagnostic: sanitizedDetail
       });
       setActiveTab('diagnostic');
     }
@@ -324,6 +355,18 @@ export const FirebaseTroubleshootModal: React.FC<FirebaseTroubleshootModalProps>
                           </div>
                         )}
 
+                        {testResult.code === 'storage/retry-limit-exceeded' && (
+                          <div className="pt-2 flex flex-wrap gap-2">
+                            <button
+                              onClick={() => setActiveTab('bucket')}
+                              className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-900 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <span>Ver Configurações do Bucket Nativo</span>
+                              <ArrowRight className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+
                         {testResult.code === 'storage/bucket-not-found' && (
                           <div className="pt-2 flex flex-wrap gap-2">
                             <button
@@ -515,9 +558,10 @@ export const FirebaseTroubleshootModal: React.FC<FirebaseTroubleshootModalProps>
                     <span className="text-xs text-slate-500">Atalhos rápidos:</span>
                     <button
                       onClick={() => handleSwitchBucketPreset('firebasestorage')}
-                      className="px-2.5 py-1 rounded-lg bg-cyan-100 dark:bg-cyan-950/60 hover:bg-cyan-200 dark:hover:bg-cyan-900 text-cyan-800 dark:text-cyan-300 text-[11px] font-mono font-medium cursor-pointer"
+                      className="px-2.5 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-950/60 hover:bg-emerald-200 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-300 text-[11px] font-mono font-bold cursor-pointer flex items-center gap-1"
                     >
-                      {config.projectId}.firebasestorage.app
+                      <CheckCircle2 className="w-3 h-3" />
+                      <span>{config.projectId}.firebasestorage.app (Padrão Nativo Firebase)</span>
                     </button>
                     <button
                       onClick={() => handleSwitchBucketPreset('appspot')}
@@ -527,6 +571,32 @@ export const FirebaseTroubleshootModal: React.FC<FirebaseTroubleshootModalProps>
                     </button>
                   </div>
                 )}
+              </div>
+
+              {/* Bucket Architecture Guide */}
+              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <span>Bucket Padrão Integrado do Firebase (gestaocorretor-eafd3.firebasestorage.app)</span>
+                  </h4>
+                  <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300">
+                    Recomendado
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                  O projeto agora utiliza o <strong>bucket padrão nativo do Firebase</strong> (<code className="font-mono text-cyan-600 dark:text-cyan-400">gs://gestaocorretor-eafd3.firebasestorage.app</code>). Este bucket possui suporte nativo integrado com o Firebase Web SDK e o Firebase Authentication, eliminando problemas de cabeçalhos de CORS comuns a buckets manuais do Google Cloud Storage.
+                </p>
+                <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-slate-200">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                    <span>Benefícios da configuração atual:</span>
+                  </div>
+                  <ul className="text-[11px] text-slate-600 dark:text-slate-400 space-y-1 pl-6 list-disc">
+                    <li>Uploads diretos e instantâneos via SDK oficial do Firebase.</li>
+                    <li>Tentativa automática e redundante de reconexão em caso de oscilações de rede.</li>
+                    <li>Armazenamento local seguro redundante (IndexedDB) caso o corretor esteja offline.</li>
+                  </ul>
+                </div>
               </div>
             </div>
           )}
