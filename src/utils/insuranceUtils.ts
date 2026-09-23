@@ -40,6 +40,9 @@ export function isMasterAdmin(user?: any): boolean {
 export function isSubAdmin(user?: any): boolean {
   if (!user) return false;
 
+  // Master Admin has global access, not restricted sub-admin privileges
+  if (isMasterAdmin(user)) return false;
+
   if (user.isSubAdmin === true) return true;
 
   const r = String(user.role || '').toUpperCase();
@@ -48,10 +51,7 @@ export function isSubAdmin(user?: any): boolean {
     r === 'SUB_ADMIN' || 
     r === 'SUBADMIN' || 
     r === 'GESTOR' || 
-    r === 'SUB_ADMINISTRADOR' ||
-    r === 'MASTER' ||
-    r === 'ADMIN' ||
-    user.id === ADMIN_USER_ID
+    r === 'SUB_ADMINISTRADOR'
   );
 }
 

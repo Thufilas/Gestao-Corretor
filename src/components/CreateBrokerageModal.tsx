@@ -62,16 +62,14 @@ export const CreateBrokerageModal: React.FC<CreateBrokerageModalProps> = ({
       }
 
       setSuccess(`Corretora "${created.name}" cadastrada com sucesso!`);
+      setLoading(false);
 
-      setTimeout(() => {
-        onBrokerageCreated(created);
-        setName('');
-        setSubAdminName('');
-        setSubAdminEmail('');
-        setSuccess(null);
-        setLoading(false);
-        onClose();
-      }, 700);
+      onBrokerageCreated(created);
+      setName('');
+      setSubAdminName('');
+      setSubAdminEmail('');
+      setSuccess(null);
+      onClose();
     } catch (err: unknown) {
       console.error('Error creating brokerage:', err);
       setError((err as Error)?.message || 'Erro ao cadastrar corretora.');

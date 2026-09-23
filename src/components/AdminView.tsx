@@ -394,6 +394,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       if (isFirebaseConfigured()) {
         console.log(`[AdminView] [Exclusão] Removendo documento do usuário ${userId} no Firestore (users)...`);
         await deleteUserFromFirestore(userId);
+        if ((userToDelete as any).uid && (userToDelete as any).uid !== userId) {
+          await deleteUserFromFirestore((userToDelete as any).uid);
+        }
+        if (userToDelete.email) {
+          await deleteUserFromFirestore(userToDelete.email);
+        }
         console.log(`[AdminView] [Exclusão] Usuário ${userId} removido com sucesso do Firestore.`);
       }
 
@@ -429,27 +435,54 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       setIsDeleting(true);
       console.log(`[AdminView] [Exclusão] Iniciando exclusão da corretora: ID=${corretoraId}, Nome=${name}`);
 
-      // 1. Atualização reativa imediata no React para remoção instantânea na tela
+      // 1. Encontrar corretores associados para exclusão no Firestore também
+      const allBrokers = loadAllBrokers();
+      const brokersToDelete = allBrokers.filter(b => {
+        if (b.id === ADMIN_USER_ID) return false;
+        const matchesId = b.brokerageId === corretoraId || (b as any).corretora_id === corretoraId;
+        const matchesName = name && b.brokerageName && b.brokerageName.toLowerCase() === name.toLowerCase();
+        return matchesId || matchesName;
+      });
+
+      // 2. Atualização reativa imediata no React para remoção instantânea na tela
       setBrokerages(prev => prev.filter(b => b.id !== corretoraId));
       if (selectedBrokerageTab === corretoraId) {
         setSelectedBrokerageTab('all');
       }
 
-      // 2. Remoção do LocalStorage
-      deleteBrokerage(corretoraId);
+      // 3. Remoção do LocalStorage (Corretora e Corretores vinculados)
+      deleteBrokerage(corretoraId, name);
+      setBrokers(loadAllBrokers());
 
-      // 3. Remoção do Firestore (coleções 'corretoras' e 'brokerages')
+      // 4. Remoção do Firestore (coleções 'corretoras', 'brokerages' e usuários/corretores) com timeout de segurança
       if (isFirebaseConfigured()) {
-        console.log(`[AdminView] [Exclusão] Removendo documento da corretora ${corretoraId} no Firestore...`);
-        await deleteCorretoraFromFirestore(corretoraId);
-        console.log(`[AdminView] [Exclusão] Corretora ${corretoraId} removida com sucesso do Firestore.`);
+        console.log(`[AdminView] [Exclusão] Removendo documento da corretora ${corretoraId} e ${brokersToDelete.length} corretor(es) associados no Firestore...`);
+        
+        const promises: Promise<any>[] = [
+          deleteCorretoraFromFirestore(corretoraId)
+        ];
+
+        for (const broker of brokersToDelete) {
+          if (broker.id) {
+            promises.push(deleteUserFromFirestore(broker.id));
+          }
+          if ((broker as any).uid && (broker as any).uid !== broker.id) {
+            promises.push(deleteUserFromFirestore((broker as any).uid));
+          }
+        }
+
+        const deletionPromise = Promise.allSettled(promises);
+        const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 4000));
+        await Promise.race([deletionPromise, timeoutPromise]);
+        console.log(`[AdminView] [Exclusão] Corretora e corretores associados processados no Firestore.`);
       }
 
-      showToast(`Corretora "${name}" excluída com sucesso.`);
+      showToast(`Corretora "${name}" e ${brokersToDelete.length} corretor(es) vinculados excluídos com sucesso.`);
     } catch (err: any) {
       console.error('[AdminView] [Exclusão] Falha detalhada ao excluir corretora:', err);
       showToast(`Erro ao excluir a corretora "${name}": ${err?.message || 'Falha de conexão.'}`);
       setBrokerages(loadAllBrokerages());
+      setBrokers(loadAllBrokers());
     } finally {
       setIsDeleting(false);
       setCorretoraToDelete(null);
@@ -557,10 +590,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             <button
               id="btn-admin-new-broker"
               onClick={() => setIsCreateBrokerOpen(true)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium transition-all cursor-pointer active:scale-95 shadow-sm"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all cursor-pointer active:scale-95 shadow-sm"
+              title="Cadastrar novo corretor no sistema"
             >
               <UserPlus className="w-4 h-4" />
-              <span>Cadastrar Utilizador</span>
+              <span>+ Cadastrar Novo Corretor</span>
             </button>
           </div>
         </div>
@@ -779,6 +813,21 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
                     <button
                       type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setSelectedBrokerageTab(br.id);
+                        setIsCreateBrokerOpen(true);
+                      }}
+                      className="px-3 py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 shrink-0"
+                      title={`Cadastrar corretor para ${br.name}`}
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">+ Corretor</span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={(e) => handleRequestDeleteCorretora(e, br)}
                       className="p-2.5 rounded-xl text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-slate-200 dark:border-slate-800 hover:border-rose-200 dark:hover:border-rose-900 transition-colors cursor-pointer active:scale-95 flex items-center justify-center"
                       title={`Excluir Corretora ${br.name}`}
@@ -871,6 +920,19 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 <div className="flex items-center gap-2 self-end sm:self-auto">
                   <button
                     type="button"
+                    onClick={() => {
+                      setSelectedBrokerageTab(currentSelectedBr.id);
+                      setIsCreateBrokerOpen(true);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-all cursor-pointer shadow-xs"
+                    title={`Adicionar corretor nesta corretora`}
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>+ Adicionar Corretor</span>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={(e) => handleRequestDeleteCorretora(e, currentSelectedBr)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 text-xs font-semibold transition-colors cursor-pointer"
                     title={`Excluir corretora ${currentSelectedBr.name}`}
@@ -932,6 +994,15 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     Inativos ({activeBrokersPool.length - metrics.activeBrokers})
                   </button>
                 </div>
+
+                <button
+                  id="btn-table-new-broker"
+                  onClick={() => setIsCreateBrokerOpen(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all cursor-pointer shadow-xs active:scale-95"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>+ Novo Corretor</span>
+                </button>
               </div>
             </div>
 

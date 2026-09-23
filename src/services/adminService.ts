@@ -321,30 +321,30 @@ export async function createBrokerAccount(params: {
   let effectiveBrokerageName = '';
   let effectiveBrokerageId = '';
 
-  if (isCreatorSub && params.creatorUser) {
+  if (params.brokerageId) {
+    const found = brokerages.find(b => b.id === params.brokerageId);
+    if (found) {
+      effectiveBrokerageId = found.id;
+      effectiveBrokerageName = found.name;
+    }
+  }
+  
+  if (!effectiveBrokerageId && params.brokerageName) {
+    const cleanName = params.brokerageName.trim();
+    const found = brokerages.find(b => b.name.toLowerCase() === cleanName.toLowerCase());
+    if (found) {
+      effectiveBrokerageId = found.id;
+      effectiveBrokerageName = found.name;
+    } else {
+      const newBr = createBrokerage(cleanName);
+      effectiveBrokerageId = newBr.id;
+      effectiveBrokerageName = newBr.name;
+    }
+  }
+
+  if (!effectiveBrokerageId && isCreatorSub && params.creatorUser) {
     effectiveBrokerageName = params.creatorUser.brokerageName || 'Minha Corretora';
     effectiveBrokerageId = params.creatorUser.brokerageId || params.creatorUser.corretora_id || getBrokerageIdFromName(effectiveBrokerageName);
-  } else {
-    if (params.brokerageId) {
-      const found = brokerages.find(b => b.id === params.brokerageId);
-      if (found) {
-        effectiveBrokerageId = found.id;
-        effectiveBrokerageName = found.name;
-      }
-    }
-    
-    if (!effectiveBrokerageId && params.brokerageName) {
-      const cleanName = params.brokerageName.trim();
-      const found = brokerages.find(b => b.name.toLowerCase() === cleanName.toLowerCase());
-      if (found) {
-        effectiveBrokerageId = found.id;
-        effectiveBrokerageName = found.name;
-      } else {
-        const newBr = createBrokerage(cleanName);
-        effectiveBrokerageId = newBr.id;
-        effectiveBrokerageName = newBr.name;
-      }
-    }
   }
 
   if (!effectiveBrokerageName) {
@@ -564,12 +564,26 @@ export function deleteBrokerAccount(brokerId: string): BrokerAccount[] {
   return updatedList;
 }
 
-export function deleteBrokerage(brokerageId: string): Brokerage[] {
-  if (!brokerageId) return loadAllBrokerages();
+export function deleteBrokerage(brokerageId: string, brokerageName?: string): Brokerage[] {
+  if (!brokerageId) return loadAllBrokerages() as any;
   const brokerages = loadAllBrokerages();
-  const updatedList = brokerages.filter(b => b.id !== brokerageId);
-  saveAllBrokerages(updatedList);
-  return updatedList;
+  const targetBr = brokerages.find(b => b.id === brokerageId);
+  const targetName = brokerageName || targetBr?.name;
+
+  const updatedBrokerages = brokerages.filter(b => b.id !== brokerageId);
+  saveAllBrokerages(updatedBrokerages);
+
+  // Also remove brokers belonging to this brokerage locally
+  const brokers = loadAllBrokers();
+  const updatedBrokers = brokers.filter(b => {
+    if (b.id === ADMIN_USER_ID) return true;
+    const matchesId = b.brokerageId === brokerageId || (b as any).corretora_id === brokerageId;
+    const matchesName = targetName && b.brokerageName && b.brokerageName.toLowerCase() === targetName.toLowerCase();
+    return !(matchesId || matchesName);
+  });
+  saveAllBrokers(updatedBrokers);
+
+  return updatedBrokerages;
 }
 
 export function getAdminMetrics(brokers: BrokerAccount[]) {

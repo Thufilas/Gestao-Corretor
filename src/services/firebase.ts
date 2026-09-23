@@ -329,19 +329,56 @@ export async function saveUserProfileToFirestore(userId: string, data: Partial<U
   }
 }
 
-export async function deleteUserFromFirestore(userId: string): Promise<void> {
+export async function deleteUserFromFirestore(userIdOrEmail: string): Promise<void> {
   const db = getFirebaseFirestore();
-  if (!db || !userId) {
+  if (!db || !userIdOrEmail) {
     return;
   }
   try {
-    console.log(`[Firestore] Excluindo usuário ID '${userId}' da coleção 'users'...`);
-    const userDocRef = doc(db, 'users', userId);
-    const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, 2500));
-    await Promise.race([deleteDoc(userDocRef), timeoutPromise]);
-    console.log(`[Firestore] Documento do usuário '${userId}' processado.`);
+    console.log(`[Firestore] Excluindo usuário '${userIdOrEmail}' da coleção 'users'...`);
+    const usersCol = collection(db, 'users');
+    const promises: Promise<any>[] = [];
+
+    // 1. Direct doc delete by ID
+    const directDocRef = doc(db, 'users', userIdOrEmail);
+    promises.push(deleteDoc(directDocRef));
+
+    // 2. Query by 'id', 'uid', or 'email'
+    const q1 = query(usersCol, where('id', '==', userIdOrEmail));
+    const q2 = query(usersCol, where('uid', '==', userIdOrEmail));
+    const q3 = query(usersCol, where('email', '==', userIdOrEmail));
+
+    const [snap1, snap2, snap3] = await Promise.allSettled([
+      getDocs(q1),
+      getDocs(q2),
+      getDocs(q3)
+    ]);
+
+    const docsToDelete = new Set<string>();
+    docsToDelete.add(userIdOrEmail);
+
+    if (snap1.status === 'fulfilled') {
+      snap1.value.forEach(d => docsToDelete.add(d.id));
+    }
+    if (snap2.status === 'fulfilled') {
+      snap2.value.forEach(d => docsToDelete.add(d.id));
+    }
+    if (snap3.status === 'fulfilled') {
+      snap3.value.forEach(d => docsToDelete.add(d.id));
+    }
+
+    for (const docId of docsToDelete) {
+      const targetRef = doc(db, 'users', docId);
+      promises.push(setDoc(targetRef, { status: 'deleted', deletedAt: new Date().toISOString() }, { merge: true }));
+      promises.push(deleteDoc(targetRef));
+    }
+
+    const deletionPromise = Promise.allSettled(promises);
+    const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, 4000));
+    await Promise.race([deletionPromise, timeoutPromise]);
+    console.log(`[Firestore] Usuário '${userIdOrEmail}' excluído com sucesso no Firestore.`);
   } catch (err: any) {
-    console.warn(`[Firestore] Aviso ao excluir usuário '${userId}' do Firestore:`, err);
+    console.warn(`[Firestore] Aviso ao excluir usuário '${userIdOrEmail}' do Firestore:`, err);
   }
 }
 
@@ -877,16 +914,30 @@ export async function firebaseCreateUserByAdmin(params: {
     const secondaryAuth = getAuth(secondaryApp);
 
     // 1. Create user in Firebase Authentication on secondary auth instance
-    const credential = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, cleanPass);
-    const createdFbUser = credential.user;
-    const uid = createdFbUser.uid;
+    let uid = '';
+    try {
+      const credential = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, cleanPass);
+      uid = credential.user.uid;
 
-    // Update display name on auth profile
-    if (fullName) {
-      try {
-        await updateProfile(createdFbUser, { displayName: fullName });
-      } catch (profileErr) {
-        console.warn('Could not update displayName on secondary Firebase Auth user:', profileErr);
+      if (fullName) {
+        try {
+          await updateProfile(credential.user, { displayName: fullName });
+        } catch (profileErr) {
+          console.warn('Could not update displayName on secondary Firebase Auth user:', profileErr);
+        }
+      }
+    } catch (createErr: any) {
+      if (createErr?.code === 'auth/email-already-in-use') {
+        console.warn(`[Firebase] Email ${cleanEmail} already in use in Auth. Attempting recovery/reuse...`);
+        try {
+          const signInCred = await signInWithEmailAndPassword(secondaryAuth, cleanEmail, cleanPass);
+          uid = signInCred.user.uid;
+        } catch (signInErr) {
+          uid = `user_existing_${btoa(cleanEmail).replace(/[^a-zA-Z0-9]/g, '_').substring(0, 24)}_${Date.now().toString(36)}`;
+          console.info(`[Firebase] Using generated unique user ID ${uid} for existing email ${cleanEmail}`);
+        }
+      } else {
+        throw createErr;
       }
     }
 

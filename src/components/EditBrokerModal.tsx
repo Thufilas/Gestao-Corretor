@@ -32,7 +32,7 @@ export const EditBrokerModal: React.FC<EditBrokerModalProps> = ({
   onSave,
   currentUser
 }) => {
-  const isMaster = isMasterAdmin(currentUser);
+  const isMaster = isMasterAdmin(currentUser) || currentUser?.isAdmin === true || String(currentUser?.role || '').toUpperCase() === 'MASTER' || String(currentUser?.role || '').toUpperCase() === 'ADMIN';
   const isSub = isSubAdmin(currentUser);
   const isTargetMaster = broker?.id === ADMIN_USER_ID;
 

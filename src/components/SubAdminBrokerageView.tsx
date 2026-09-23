@@ -209,6 +209,12 @@ export const SubAdminBrokerageView: React.FC<SubAdminBrokerageViewProps> = ({ cu
       // 3. Remoção do Firestore
       if (isFirebaseConfigured()) {
         await deleteUserFromFirestore(brokerId);
+        if ((brokerToDelete as any).uid && (brokerToDelete as any).uid !== brokerId) {
+          await deleteUserFromFirestore((brokerToDelete as any).uid);
+        }
+        if (brokerToDelete.email) {
+          await deleteUserFromFirestore(brokerToDelete.email);
+        }
       }
 
       showToast(`Corretor "${name}" excluído da equipe.`);
